@@ -101,9 +101,7 @@ fn notch(lines: f32) -> SurfaceEvent {
 }
 
 /// Opens the window over the machine's own fonts.
-fn opened(
-    beat: zgui::reactive::RwSignal<usize, zgui::reactive::LocalStorage>,
-) -> Harness<Runtime> {
+fn opened(beat: zgui::reactive::RwSignal<usize, zgui::reactive::LocalStorage>) -> Harness<Runtime> {
     let fonts = Fonts::system();
     let metrics = fonts.clone();
     let shaping = fonts.clone();

@@ -318,3 +318,112 @@ fn an_empty_group_composites_nothing_rather_than_what_the_pool_last_held() {
         "the empty group put the last lease's content on the page"
     );
 }
+
+/// A group whose opacity and position moved twenty times composites exactly as a renderer that
+/// only ever saw the last step does.
+///
+/// Every step is a whole frame: full damage, a fresh target lease, one composite. Nothing about
+/// the pool, the plan or the composite may carry the earlier steps into the last one — a target
+/// lent at a lower resolution because an earlier frame filled the budget, a sample taken through
+/// a filtering sampler where none was needed — so the pixels of the two are compared exactly.
+#[test]
+fn a_group_animated_over_twenty_frames_composites_as_a_fresh_renderer_does() {
+    let Some(mut animated) = plain_renderer() else {
+        return;
+    };
+    let frame = |scene: &mut Scene, phase: f32| {
+        scene.begin_frame(Size::new(SIDE, SIDE));
+        quad(scene, (0.0, 0.0, SIDE as f32, SIDE as f32), [255; 3]);
+        let shift = -20.0 * phase;
+        grouped(
+            scene,
+            (40.0 + shift, 30.0, 41.0, 18.0),
+            0.4 + 0.6 * phase,
+            &[],
+            |scene| {
+                quad(scene, (40.0 + shift, 30.0, 41.0, 18.0), [40, 120, 200]);
+                quad(scene, (48.0 + shift, 36.0, 12.0, 6.0), [255, 255, 255]);
+            },
+        );
+        scene.finish(&DamageSet::full());
+    };
+    let mut scene = Scene::new();
+    let mut last = None;
+    for step in 0..=20 {
+        frame(&mut scene, 0.9 * step as f32 / 20.0);
+        last = Some(present(&mut animated, &scene));
+    }
+    let moved = last.expect("twenty-one frames were drawn");
+    drop(animated);
+
+    let Some(mut fresh) = plain_renderer() else {
+        return;
+    };
+    let mut once = Scene::new();
+    frame(&mut once, 0.9);
+    let built = present(&mut fresh, &once);
+    assert_eq!(
+        moved.max_difference(&built),
+        0,
+        "the animated renderer's last frame differs from a fresh renderer's only frame"
+    );
+    assert_eq!(fresh.groups().degraded(), 0);
+}
+
+/// The same twenty steps, each drawn over the damage the step actually produced: where the
+/// group was and where it is now, and nothing else.
+///
+/// This is the shape an animated badge has in a real frame. The composed target keeps every
+/// pixel outside the damage, and the group's target is lent again from the pool with whatever
+/// the last step left in it — so a composite that read outside the damage, or a target region
+/// that was not cleared before it was drawn into, is what this finds.
+#[test]
+fn a_group_animated_under_partial_damage_composites_as_a_fresh_renderer_does() {
+    let Some(mut animated) = plain_renderer() else {
+        return;
+    };
+    let bounds = |phase: f32| (40.0 - 20.0 * phase, 30.0, 41.0, 18.0);
+    let frame = |scene: &mut Scene, phase: f32, damage: &DamageSet| {
+        scene.begin_frame(Size::new(SIDE, SIDE));
+        quad(scene, (0.0, 0.0, SIDE as f32, SIDE as f32), [255; 3]);
+        let at = bounds(phase);
+        grouped(scene, at, 0.4 + 0.6 * phase, &[], |scene| {
+            quad(scene, at, [40, 120, 200]);
+            quad(scene, (at.0 + 8.0, at.1 + 6.0, 12.0, 6.0), [255, 255, 255]);
+        });
+        scene.finish(damage);
+    };
+    let damage_of = |from: f32, to: f32| {
+        let mut damage = DamageSet::new();
+        for phase in [from, to] {
+            let (x, y, w, h) = bounds(phase);
+            let corner: zgui_geom::Rect<i32, zgui_geom::Device> = zgui_geom::Rect::new(
+                zgui_geom::Point::new(x.floor() as i32, y.floor() as i32),
+                Size::new(w.ceil() as i32 + 1, h.ceil() as i32 + 1),
+            );
+            damage.absorb(corner);
+        }
+        damage
+    };
+    let mut scene = Scene::new();
+    frame(&mut scene, 0.0, &DamageSet::full());
+    let mut last = present(&mut animated, &scene);
+    for step in 1..=20 {
+        let (from, to) = (0.9 * (step - 1) as f32 / 20.0, 0.9 * step as f32 / 20.0);
+        frame(&mut scene, to, &damage_of(from, to));
+        last = present(&mut animated, &scene);
+    }
+    drop(animated);
+
+    let Some(mut fresh) = plain_renderer() else {
+        return;
+    };
+    let mut once = Scene::new();
+    frame(&mut once, 0.9, &DamageSet::full());
+    let built = present(&mut fresh, &once);
+    assert_eq!(
+        last.max_difference(&built),
+        0,
+        "the animated renderer's last frame differs from a fresh renderer's only frame"
+    );
+}

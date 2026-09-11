@@ -31,6 +31,7 @@
 pub mod attr_set;
 pub mod class_set;
 pub mod state_mask;
+pub(crate) mod var_refs;
 
 use rustc_hash::FxHashSet;
 use style::stylist::Stylist;

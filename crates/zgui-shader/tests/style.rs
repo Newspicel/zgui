@@ -73,12 +73,7 @@ fn app(css: &str) -> Harness<Runtime> {
             ))
         }))
         .into_handler(move |cx: &mut BuildCx<'_>| {
-            Box::new(
-                zgui_elements::r#box()
-                    .class("card")
-                    .into_view()
-                    .build(cx),
-            )
+            Box::new(zgui_elements::r#box().class("card").into_view().build(cx))
         })
         .expect("the reactive runtime installs");
     Harness::new(handler)
@@ -116,7 +111,9 @@ fn an_ordinary_box_draws_an_ordinary_quad() {
 #[test]
 fn a_corner_shape_replaces_the_quad_and_keeps_the_paints_that_fill_it() {
     let _ = SQUIRCLE.register();
-    let mut app = app(&sheet("--zgui-shape: style-shape; --style-shape-exponent: 4"));
+    let mut app = app(&sheet(
+        "--zgui-shape: style-shape; --style-shape-exponent: 4",
+    ));
     app.settle(16);
 
     let (shaded, quads) = drawn(&mut app);
@@ -134,11 +131,9 @@ fn a_corner_shape_replaces_the_quad_and_keeps_the_paints_that_fill_it() {
 #[test]
 fn a_corner_shape_keeps_a_gradient_the_way_it_keeps_a_colour() {
     let _ = SQUIRCLE.register();
-    let mut app = app(
-        "box { display: block; width: 120px; height: 60px; \
+    let mut app = app("box { display: block; width: 120px; height: 60px; \
          background: linear-gradient(140deg, #8fc0ff, #6ea8ff); \
-         --zgui-shape: style-shape; --style-shape-exponent: 4 }",
-    );
+         --zgui-shape: style-shape; --style-shape-exponent: 4 }");
     app.settle(16);
 
     let (shaded, quads) = drawn(&mut app);
@@ -160,12 +155,10 @@ fn a_corner_shape_keeps_a_gradient_the_way_it_keeps_a_colour() {
 #[test]
 fn a_shaped_box_carries_the_origin_its_ramp_was_resolved_against() {
     let _ = SQUIRCLE.register();
-    let mut app = app(
-        "root { display: block; padding: 30px } \
+    let mut app = app("root { display: block; padding: 30px } \
          box { display: block; width: 120px; height: 60px; \
          background: linear-gradient(140deg, #8fc0ff, #6ea8ff); \
-         --zgui-shape: style-shape }",
-    );
+         --zgui-shape: style-shape }");
     app.settle(16);
 
     let (shaded, _) = drawn(&mut app);
@@ -180,7 +173,9 @@ fn a_shaped_box_carries_the_origin_its_ramp_was_resolved_against() {
 #[test]
 fn a_parameter_written_beside_the_name_reaches_the_block() {
     let _ = SQUIRCLE.register();
-    let mut app = app(&sheet("--zgui-shape: style-shape; --style-shape-exponent: 4"));
+    let mut app = app(&sheet(
+        "--zgui-shape: style-shape; --style-shape-exponent: 4",
+    ));
     app.settle(16);
     let scene = app.app_mut().windows_mut()[0].scene();
     let slot = scene.primitives.shaded[0].params_slot();
@@ -264,8 +259,10 @@ fn a_filter_effect_becomes_a_step_of_the_group_the_box_is_composited_through() {
     let mut app = app(&sheet("--zgui-filter: style-glass"));
     app.settle(16);
 
-    let opened: Vec<zgui_scene::GroupBoundary> =
-        groups(&mut app).into_iter().filter(|g| g.is_start).collect();
+    let opened: Vec<zgui_scene::GroupBoundary> = groups(&mut app)
+        .into_iter()
+        .filter(|g| g.is_start)
+        .collect();
     assert_eq!(opened.len(), 1, "a filtered box is composited on its own");
     assert!(
         opened[0]
@@ -285,8 +282,10 @@ fn the_reach_an_effect_declared_reaches_the_group_that_runs_it() {
     let mut app = app(&sheet("--zgui-filter: style-glass"));
     app.settle(16);
 
-    let opened: Vec<zgui_scene::GroupBoundary> =
-        groups(&mut app).into_iter().filter(|g| g.is_start).collect();
+    let opened: Vec<zgui_scene::GroupBoundary> = groups(&mut app)
+        .into_iter()
+        .filter(|g| g.is_start)
+        .collect();
     let boundary = &opened[0];
     assert!(
         boundary.source.origin.x.0 < boundary.bounds.origin.x.0,
@@ -346,12 +345,15 @@ fn a_rectangle_effect_named_as_a_filter_is_refused() {
     let mut app = app(&sheet("--zgui-filter: style-wash"));
     app.settle(16);
 
-    let opened: Vec<zgui_scene::GroupBoundary> =
-        groups(&mut app).into_iter().filter(|g| g.is_start).collect();
+    let opened: Vec<zgui_scene::GroupBoundary> = groups(&mut app)
+        .into_iter()
+        .filter(|g| g.is_start)
+        .collect();
     assert!(
-        opened
+        opened.iter().all(|g| !g
+            .filters
             .iter()
-            .all(|g| !g.filters.iter().any(|f| matches!(f, zgui_scene::Filter::Custom { .. }))),
+            .any(|f| matches!(f, zgui_scene::Filter::Custom { .. }))),
         "nothing filters"
     );
 }
@@ -403,11 +405,9 @@ fn an_effect_that_declared_nothing_carries_no_pointer_at_all() {
 #[test]
 fn a_subtree_opts_out_of_a_shape_it_inherited() {
     let _ = SQUIRCLE.register();
-    let mut app = app(
-        "root { display: block; --zgui-shape: style-shape } \
+    let mut app = app("root { display: block; --zgui-shape: style-shape } \
          box { display: block; width: 120px; height: 60px; background-color: #ff0000; \
-         --zgui-shape: none }",
-    );
+         --zgui-shape: none }");
     app.settle(16);
 
     let (shaded, quads) = drawn(&mut app);

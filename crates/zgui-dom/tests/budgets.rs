@@ -11,8 +11,8 @@
 //! the cost the dirty-child record exists to remove. `dirty_walk_steps` counts every child probed,
 //! so it is the counter that separates "descended into the marked children" from "tested every
 //! child". Both count what a *walk* does, and neither can see what maintaining the record between
-//! walks costs; `dirty_child_steps` counts the sibling links a mark follows, which is where an
-//! implementation that walks the child list once per mark shows up.
+//! walks costs: a record that names children by identity follows no sibling links, so recording a
+//! mark is one insertion whatever the width of the list.
 //!
 //! # Why this is a target of its own
 //!
@@ -151,33 +151,21 @@ fn probes_for(marked: &[usize]) -> u64 {
 }
 
 #[test]
-fn a_scattered_fifth_mark_promotes_to_the_span() {
+fn scattered_marks_are_probed_and_nothing_between_them_is() {
     let _measuring = measuring();
     // Four exact children, plus the one probe that leads from the document node into the container.
     assert_eq!(probes_for(&[3, 900, 4_000, 9_999]), 5);
-    // The fifth turns the record into the inclusive run that covers all five, which is the right
-    // description for a reorder and the wrong one for two scattered pointer moves. Every budget in
-    // this file is written knowing that, which is why none of them uses five scattered marks.
-    assert!(probes_for(&[3, 900, 4_000, 9_000, 9_999]) > 9_000);
+    // The fifth moves the record to the document's overflow set, which still names exactly the
+    // marked children: two scattered pointer moves in one frame cost their four rows, and a
+    // reorder that marks every row costs every row and nothing more.
+    assert_eq!(probes_for(&[3, 900, 4_000, 9_000, 9_999]), 6);
+    let mut hundred: Vec<usize> = (0..100).map(|step| step * 7_919 % 10_000).collect();
+    hundred.sort_unstable();
+    hundred.dedup();
+    assert_eq!(probes_for(&hundred), hundred.len() as u64 + 1);
 }
 
-/// The order marks arrive in, and the sibling steps recording them cost.
-///
-/// A run says where it starts and where it ends and nothing about where a further child sits
-/// relative to it, so every widening past the fourth mark has to ask the sibling chain. Asking it
-/// without a bound costs a walk of the child list per mark, which is quadratic in the width of the
-/// list and is the one cost in this file that no other counter can see: the same children end up
-/// marked, the same nodes are visited, and the same work comes out.
-fn sibling_steps_for(order: impl Iterator<Item = usize>) -> u64 {
-    let (mut document, rows) = wide_row(WIDE);
-    counter::reset();
-    for index in order {
-        propagate::mark(document.store_mut(), rows[index], Dirty::RESTYLE);
-    }
-    counter::get(Counter::DirtyChildSteps)
-}
-
-/// How wide the row the sibling-step budgets are written against is.
+/// How wide the row the scattered-order budget is written against is.
 const WIDE: usize = 8_000;
 
 /// A deterministic order that visits every row of a [`WIDE`] row exactly once, in neither document
@@ -186,33 +174,9 @@ fn scattered_order() -> impl Iterator<Item = usize> {
     (0..WIDE).map(|step| step * 4_001 % WIDE)
 }
 
-#[test]
-fn recording_a_marked_child_costs_a_bounded_number_of_sibling_steps() {
-    let _measuring = measuring();
-    // Four steps per mark, against a row eight thousand wide. An implementation that searches the
-    // child list instead spends thirty-two million on the scattered order alone — the measured
-    // difference is a hundred and seventeen milliseconds against a hundred and twenty microseconds.
-    let ceiling = 4 * WIDE as u64;
-
-    let forwards = sibling_steps_for(0..WIDE);
-    assert!(
-        (1..ceiling).contains(&forwards),
-        "marking a row front to back cost {forwards} sibling steps"
-    );
-
-    let backwards = sibling_steps_for((0..WIDE).rev());
-    assert!(
-        (1..ceiling).contains(&backwards),
-        "marking a row back to front cost {backwards} sibling steps"
-    );
-
-    let scattered = sibling_steps_for(scattered_order());
-    assert!(
-        scattered < ceiling,
-        "marking a row in scattered order cost {scattered} sibling steps"
-    );
-}
-
+/// A record that names children by identity has no order to keep and no chain to consult, so the
+/// cheapest way to satisfy a budget on recording is to record nothing at all; this is the check
+/// that every marked child is still serviced.
 /// The counter above is only a budget if the walk it bounds still services every marked child, and
 /// the cheapest way to satisfy a step budget is to record nothing at all.
 #[test]

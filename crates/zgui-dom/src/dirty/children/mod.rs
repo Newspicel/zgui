@@ -5,8 +5,6 @@
 //! still probes ten thousand invalidation words unless something narrows the child iteration too.
 //! This record is that something.
 //!
-//! Two decisions in it are worth stating, because both were made the other way first.
-//!
 //! **Children are recorded by identity, never by position.** Positions among element siblings are
 //! numbered lazily, so a structural change can invalidate every position in a child list *after* a
 //! mark was recorded and *before* a walk reads it — a walk keyed by position would then descend
@@ -14,41 +12,27 @@
 //! resolving "the five-hundredth child" means following five hundred links, because a child list is
 //! a chain and there is no position-to-node map anywhere.
 //!
-//! **The exact list is the default and the span is the fallback**, not the other way round. The
-//! commonest frame there is moves a pointer, which clears a state bit on one row and sets it on
-//! another far away; an inclusive span between them covers every clean row in between and pays a
-//! probe for each. Four exact entries cover that case, and focus-out/focus-in, and an edge pair,
-//! and a single insertion. Only the fifth distinct child promotes to the span, which is where the
-//! span genuinely is the cheaper description.
+//! **Four children live in the record and the rest live in the document.** The commonest frame
+//! there is moves a pointer, which clears a state bit on one row and sets it on another far away,
+//! and four slots on the node cover that, focus-out/focus-in, an edge pair and a single insertion.
+//! The fifth distinct child moves the set to the document's overflow table, keyed by the owner,
+//! where it grows by identity: a mark costs one insertion whatever the width of the child list
+//! and wherever the child sits in it, and a walk visits exactly the marked children. Past
+//! [`OVERFLOW_CAP`] entries the record degrades to naming every child, which is the point at
+//! which the set costs more than the probes it saves.
 //!
-//! **The span runs along the plain child chain and not the element-only one**, and that is a
-//! correctness requirement rather than a choice. Text nodes are marked too — editing the text of a
-//! node is an obligation like any other — and a span that stepped from element to element could
-//! not name one, so the fifth mark on a child list containing text would silently drop whichever
-//! marks fell on it. The exact list has no such gap, because it names children by identity, so the
-//! two halves of the record would have disagreed with each other about which children exist.
-//!
-//! **Every step this record takes along a child chain is bounded by a constant**, and that is the
-//! difference between a record that costs `O(marks)` over a frame and one that costs
-//! `O(marks · width)`. A run says nothing about where a child sits relative to it, so widening for
-//! one asks the chain — and a chain is the only structure there is, because positions among
-//! siblings are numbered lazily and a number read between a structural change and the renumber that
-//! follows it names the wrong child. So the question is asked of at most [`SCAN`] links either side
-//! of the child, and when that does not settle it the record widens to *every* child of its owner
-//! rather than walking the list to find out. That answer is a superset of the right one, so nothing
-//! marked is ever lost; what it costs is probes on children that turned out to be clean, in exactly
-//! the case — five or more marks scattered across a wide list — where a run was already going to
-//! cover most of them.
+//! **The record is a superset of the truth and never a subset.** A child that was marked and has
+//! since left the owner is filtered out when the record is read, by the parent test in `iter`; a
+//! child that is still there is always reached. Nothing here needs repairing when a child is
+//! unlinked, because nothing here describes the child list's shape.
 //!
 //! | Module | Contents |
 //! |---|---|
 //! | `repr` | the four slots and the tag that says how to read them |
-//! | `widen` | recording a mark, and repairing the record when a child leaves |
-//! | `place` | placing a child against a run in a bounded number of steps |
+//! | `widen` | recording a mark, and moving to the overflow set |
 //! | `iter` | reading the record back as the children it names |
 
 mod iter;
-mod place;
 mod repr;
 mod widen;
 
@@ -61,8 +45,10 @@ use crate::arena::store::DocumentStore;
 use crate::dirty::children::repr::Repr;
 use crate::id::node_key::NodeIndex;
 
-pub use crate::dirty::children::place::SCAN;
 pub use crate::dirty::children::repr::EXACT;
+
+/// How many children the overflow set names before the record degrades to every child.
+pub const OVERFLOW_CAP: usize = 4096;
 
 /// Which of a node's children owe work.
 ///
@@ -85,26 +71,34 @@ impl DirtyChildren {
     /// Whether this record names no children.
     pub fn is_empty(&self) -> bool {
         let repr = self.0.get();
-        repr.len != Repr::SPAN && repr.len == 0
+        !repr.is_wide() && repr.len == 0
     }
 
-    /// Whether this record has degraded to an inclusive span.
-    pub fn is_span(&self) -> bool {
-        self.0.get().len == Repr::SPAN
+    /// Whether this record has left its own slots for the overflow set, or names every child.
+    pub fn is_wide(&self) -> bool {
+        self.0.get().is_wide()
     }
 
-    /// How many children the record names exactly, or [`None`] once it has degraded to a span.
+    /// Whether this record names every child of its owner.
+    pub fn is_all(&self) -> bool {
+        self.0.get().len == Repr::ALL
+    }
+
+    /// How many children the record names in its own slots, or [`None`] once it is wide.
     pub fn exact_len(&self) -> Option<usize> {
         let repr = self.0.get();
-        (repr.len != Repr::SPAN).then_some(repr.len as usize)
+        (!repr.is_wide()).then_some(repr.len as usize)
     }
 
-    /// Forgets every child.
+    /// Forgets every child named in the record's own slots.
+    ///
+    /// An overflow set the record had moved to is left to the next [`DirtyChildren::widen`] that
+    /// moves there again, or to [`DirtyChildren::replace`], which has the store to release it.
     pub fn clear(&self) {
         self.0.set(Repr::EMPTY);
     }
 
-    /// Replaces the record with exactly `children`, degrading to a span past the fourth.
+    /// Replaces the record with exactly `children`, moving to the overflow set past the fourth.
     ///
     /// This is how a walk rebuilds the record as it unwinds, from the children it found still
     /// owing work. `owner` is the node whose record this is, and children it no longer parents are
@@ -120,6 +114,9 @@ impl DirtyChildren {
         children: impl IntoIterator<Item = NodeIndex>,
         store: &DocumentStore,
     ) {
+        if self.is_wide() {
+            store.dirty_overflow().remove(&owner);
+        }
         self.clear();
         for child in children {
             self.widen(owner, child, store);

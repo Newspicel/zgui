@@ -88,7 +88,14 @@ pub fn note_with(stage: &'static str, describe: impl FnOnce() -> String) {
     if !listening() {
         return;
     }
-    record(stage, describe(), Instant::now());
+    // A ring kept for its marks alone leaves the note unbuilt; the file, which keeps everything,
+    // still asks for it.
+    let note = if ENABLED.load(Ordering::Relaxed) || crate::latency::ring::wants_notes() {
+        describe()
+    } else {
+        String::new()
+    };
+    record(stage, note, Instant::now());
 }
 
 /// Records that `stage` happened at `at`, which a caller that already read the clock supplies.

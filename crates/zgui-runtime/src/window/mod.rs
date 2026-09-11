@@ -267,10 +267,7 @@ pub struct Window {
     /// every time the cascade runs while everything already shaped still names the slot the old one
     /// claimed. This is the way back from the element the style engine reports to the slot its
     /// glyphs actually read.
-    text_slots: rustc_hash::FxHashMap<
-        (zgui_dom::NodeKey, zgui_style::TextRun),
-        crate::window::brushes::TextSlot,
-    >,
+    text_slots: crate::window::brushes::TextSlots,
     /// The text engine.
     text: Box<dyn TextEngine>,
     /// What puts the display list on the screen.
@@ -682,7 +679,7 @@ impl Window {
             layout_passes: 0,
             scrolled_this_frame: Vec::new(),
             brushes_moved: false,
-            text_slots: rustc_hash::FxHashMap::default(),
+            text_slots: crate::window::brushes::TextSlots::default(),
             text,
             renderer,
             router: Router::new(),

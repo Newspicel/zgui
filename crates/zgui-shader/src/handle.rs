@@ -156,9 +156,7 @@ impl<P: ShaderParams> ShaderHandle<P> {
 
     /// The block the effect is currently drawn with.
     pub fn params(&self) -> Block {
-        self.slot
-            .lock()
-            .map_or(Block::EMPTY, |held| held.params)
+        self.slot.lock().map_or(Block::EMPTY, |held| held.params)
     }
 
     /// How many times the parameters have changed.
@@ -268,8 +266,7 @@ mod tests {
 
     #[test]
     fn an_effect_with_no_parameters_still_has_a_block() {
-        let handle: ShaderHandle<NoParams> =
-            ShaderHandle::new(ShaderId(2), ShaderReads::NOTHING);
+        let handle: ShaderHandle<NoParams> = ShaderHandle::new(ShaderId(2), ShaderReads::NOTHING);
         handle.set_params(NoParams);
         assert_eq!(handle.params().user, [0u8; zgui_scene::MAX_PARAMS_BYTES]);
     }

@@ -77,6 +77,7 @@ mod tests {
             placements: &zgui_scene::Placements::EMPTY,
             scale: 1.0,
             focus: None,
+            scroll: None,
         };
         assert!(
             !is_absent(&world, document.store().key_of(root)),

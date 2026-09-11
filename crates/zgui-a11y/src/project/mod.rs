@@ -112,6 +112,7 @@ mod tests {
             placements: &zgui_scene::Placements::EMPTY,
             scale: 1.0,
             focus: None,
+            scroll: None,
         };
         assert!(node(&world, document.store().key_of(marker)).is_none());
     }
@@ -131,6 +132,7 @@ mod tests {
             placements: &zgui_scene::Placements::EMPTY,
             scale: 1.0,
             focus: None,
+            scroll: None,
         };
         let projected = node(&world, document.store().key_of(root)).expect("an element projects");
         assert_eq!(projected.role(), Role::GenericContainer);
@@ -161,6 +163,7 @@ mod tests {
             placements: &zgui_scene::Placements::EMPTY,
             scale: 1.0,
             focus: None,
+            scroll: None,
         };
         let key = document.store().key_of(button);
         let first: Option<Node> = node(&world, key);

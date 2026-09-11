@@ -78,6 +78,7 @@ mod tests {
             placements: &zgui_scene::Placements::EMPTY,
             scale: 1.0,
             focus: None,
+            scroll: None,
         };
         let store = document.store();
 
@@ -123,6 +124,7 @@ mod tests {
             placements: &zgui_scene::Placements::EMPTY,
             scale: 1.0,
             focus: None,
+            scroll: None,
         };
         let semantics: Semantics = zgui_vocab::A11y::new(Role::Slider)
             .numeric_value(0.5)

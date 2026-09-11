@@ -27,7 +27,7 @@ use zgui_profile::{Counter, counter};
 use zgui_scene::ClipId;
 
 use crate::fragment::build::{Descent, Placed, Tables};
-use crate::fragment::hit::HitIndex;
+use crate::fragment::hit::{HitIndex, HitOrder};
 use crate::fragment::{FragKey, FragmentFlags, FragmentKind, build};
 use crate::tree::store::LayoutStore;
 
@@ -97,7 +97,6 @@ pub fn rebuild(
 }
 
 /// The same walk in a caller's reusable buffers, which is what a per-frame caller wants.
-#[expect(clippy::too_many_arguments, reason = "the wrapped signature plus one")]
 pub fn rebuild_in(
     scratch: &mut DiffScratch,
     store: &mut LayoutStore,
@@ -135,12 +134,14 @@ pub fn rebuild_in(
         damage,
         scratch,
         restacked: false,
+        renumber: false,
+        born_order: None,
         moves: RigidMoves::default(),
         // Read once, here, rather than once per moved subtree: how a frame is being measured is
         // decided before the frame and must not change part-way through one.
         passes: split::current(),
     };
-    pass.visit(root, descent, None, None);
+    pass.visit(root, descent, None, None, (0, HitOrder::MAX));
     let moves = pass.moves;
     // Every rigid move the walk made wrote its entries and left the hierarchy above them for here,
     // so that a scroll repairs it once instead of once per entry. Nothing may query the index
@@ -159,7 +160,7 @@ pub fn rebuild_in(
     // into the next frame would repaint an unchanged fragment once more for every time it changed.
     let root_source = pass.store.node(root).source;
     pass.dirty.retire(root_source, ENTERS);
-    let restacked = pass.restacked;
+    let restacked = pass.restacked || pass.renumber;
     // Every fragment that ceased to exist since the last pass, including the ones belonging to
     // boxes this walk never reached because they are no longer in the tree. Their entries would
     // otherwise answer hits for ever, at the place the deleted content used to be, in front of
@@ -335,6 +336,21 @@ struct Folded {
     disjoint: bool,
     /// Whether every piece in this subtree moves by the same vector as the box above it.
     rigid: bool,
+    /// The range of hit-order keys the subtree spans, `(MAX, 0)` when it indexes nothing.
+    order: (HitOrder, HitOrder),
+}
+
+impl Folded {
+    /// The fold of a subtree with nothing in it.
+    fn empty() -> Self {
+        Self {
+            subtree_ink: Rect::ZERO,
+            blending: false,
+            disjoint: true,
+            rigid: true,
+            order: (HitOrder::MAX, 0),
+        }
+    }
 }
 
 /// The state one walk carries.
@@ -351,8 +367,17 @@ struct Pass<'a, 'b, D: FrameDirty> {
     damage: &'a mut DamageSet,
     /// The reusable buffers the walk works in.
     scratch: &'a mut DiffScratch,
-    /// Whether this walk produced a fragment that has no place in the painting order yet.
+    /// Whether the painting order itself moved under this walk, so that the keys the index
+    /// carries have to be handed out again.
     restacked: bool,
+    /// Whether a newborn fragment found no room between its neighbours' order keys.
+    ///
+    /// Answered by handing every key out again once the walk is done, which is the rebuild the
+    /// index already knows how to do; nothing queries the index before then.
+    renumber: bool,
+    /// The order key the fragment about to be born takes, handed from the box that placed it to
+    /// the index write that files it.
+    born_order: Option<HitOrder>,
     /// What the walk's rigid moves add up to.
     moves: RigidMoves,
     /// Whether a subtree that only moved is offset in one descent or in one descent per duty.
@@ -412,18 +437,18 @@ impl<D: FrameDirty> Pass<'_, '_, D> {
         from: Descent,
         parent: Option<FragKey>,
         generator: Option<zgui_dom::NodeKey>,
+        between: (HitOrder, HitOrder),
     ) -> Folded {
         counter::bump(Counter::NodesVisited);
         let Some(placed) = build::place(self.store, self.tables, key, from) else {
-            return Folded {
-                subtree_ink: Rect::ZERO,
-                blending: false,
-                disjoint: true,
-                rigid: true,
-            };
+            return Folded::empty();
         };
         let state = self.store.state_mut(key);
         state.snapped = placed.snapped;
+        // Read before it is replaced: whether this box's size is what its children were composed
+        // against decides whether a child that reads the size — a sticky one, through the
+        // scrollport and the containing block — can be left alone.
+        let size_stable = state.composed.size == state.unrounded.size;
         state.composed = state.unrounded;
         // Read before it is replaced: the difference between the two is how far this box's contents
         // have moved since they were last composed, which is the whole input to the offsetting path.
@@ -433,7 +458,20 @@ impl<D: FrameDirty> Pass<'_, '_, D> {
 
         let owed = self.owed_by(key, generator);
         let own = owed.own;
-        let (fragments, moved) = self.write_fragments(key, &placed, parent, &owed);
+        // Read before the write replaces it: whether the matrix this box's children are drawn
+        // through is the one they were composed under.
+        let transform_stable = self
+            .store
+            .fragments_of_box(key)
+            .first()
+            .and_then(|frag| self.store.fragment(*frag))
+            .is_some_and(|fragment| fragment.transform_hash == placed.transform_hash);
+        // A stacking change reorders what this box's children are painted after; the keys the
+        // index carries for them are then numbered for an order that no longer holds.
+        if own.contains(Dirty::RESTACK) {
+            self.restacked = true;
+        }
+        let (fragments, moved) = self.write_fragments(key, &placed, parent, &owed, between);
 
         // A box's first fragment is its own piece and every later one hangs below it, so the later
         // ones are pieces of the subtree and not part of the box's own ink. Folding them into it
@@ -453,11 +491,32 @@ impl<D: FrameDirty> Pass<'_, '_, D> {
             }
         }
 
+        let mut order = (HitOrder::MAX, 0);
+        for index in fragments.clone() {
+            if let Some(held) = self.hit.order_of(self.scratch.written[index]) {
+                order = (order.0.min(held), order.1.max(held));
+            }
+        }
+        // Where the next newborn goes: after everything painted so far, which is this box's own
+        // pieces once they are written, or whatever came before the box when it has none.
+        let mut cursor = if order.1 > 0 { order.1 } else { between.0 };
+
         let children_mark = self.scratch.children.len();
         self.scratch
             .children
             .extend_from_slice(&self.store.node(key).children);
         let children_end = self.scratch.children.len();
+        // A child with no fragments yet is about to be born among its siblings, and it is placed
+        // by their layout positions. Where the box paints its children in another order that
+        // placement is wrong, and the whole index is numbered again instead.
+        if (children_mark..children_end).any(|index| {
+            self.store
+                .fragments_of_box(self.scratch.children[index])
+                .is_empty()
+        }) && !crate::fragment::stacking::children_in_layout_order(self.store, key)
+        {
+            self.restacked = true;
+        }
         let first_fragment = (!fragments.is_empty()).then(|| self.scratch.written[fragments.start]);
         let mut blending = placed.blends;
         let mut disjoint = true;
@@ -473,24 +532,60 @@ impl<D: FrameDirty> Pass<'_, '_, D> {
         // was. What must *not* be consulted here is what the subtree owes: that is the union over
         // every descendant, so testing it would dismiss the skip for every sibling of anything
         // dirty, and the per-child test below is the refinement of exactly that question.
-        let settled = !moved && !own.intersects(ENTERS);
+        //
+        // What a child's composition reads off this box is its rounded origin, the shift above it
+        // and the matrix it is drawn through — and not the box's size, unless the child is sticky
+        // or is itself a different shape. So the children are left alone when those three stood
+        // still, whatever happened to the box's own pieces: a column that grew because one row
+        // did has moved none of the rows above it.
+        let settled = !own.intersects(ENTERS)
+            && movement.is_none()
+            && (!moved || (placed.descent.origin_stable && transform_stable));
         // Deeper visits append their own regions past `children_end` and truncate them again, so
         // the indices walked here stay this box's children throughout.
         for index in children_mark..children_end {
             let child = self.scratch.children[index];
             let clean = self.can_skip(child, owed.node);
+            let next = self.next_indexed_after(index + 1, children_end, between.1);
+            let child_between = (cursor, next);
             let folded = match movement {
-                _ if settled && clean => self.cached(child),
+                _ if settled && clean && (size_stable || self.can_translate(child)) => {
+                    self.cached(child)
+                }
                 Some(movement) if clean && self.can_translate(child) => {
                     self.translate(child, movement)
                 }
-                _ => self.visit(child, placed.descent, first_fragment, owed.node),
+                _ => match self.layout_shift(child, &placed, owed.node) {
+                    Some((shift, snapped)) => {
+                        // Adopted before the carry, so the walk finds every box below composed
+                        // from the result it holds — this one included.
+                        let state = self.store.state_mut(child);
+                        state.composed = state.unrounded;
+                        state.snapped = snapped;
+                        if shift.by == (0.0, 0.0) {
+                            self.cached(child)
+                        } else {
+                            self.translate(child, shift)
+                        }
+                    }
+                    None => self.visit(
+                        child,
+                        placed.descent,
+                        first_fragment,
+                        owed.node,
+                        child_between,
+                    ),
+                },
             };
             self.scratch.child_inks.push(folded.subtree_ink);
             blending |= folded.blending;
             disjoint &= folded.disjoint;
             rigid &= folded.rigid;
             subtree_ink = subtree_ink.union(folded.subtree_ink);
+            if folded.order.1 > 0 {
+                cursor = cursor.max(folded.order.1);
+                order = (order.0.min(folded.order.0), order.1.max(folded.order.1));
+            }
         }
 
         // `own ink disjoint from everything below it, everything below it pairwise disjoint, and
@@ -503,7 +598,14 @@ impl<D: FrameDirty> Pass<'_, '_, D> {
         disjoint &= !child_inks.iter().any(|child| overlaps(ink, *child));
         disjoint &= pairwise_disjoint(child_inks);
 
-        self.record_fold(fragments.clone(), subtree_ink, blending, disjoint, rigid);
+        self.record_fold(
+            fragments.clone(),
+            subtree_ink,
+            blending,
+            disjoint,
+            rigid,
+            order,
+        );
         self.scratch.child_inks.truncate(inks_mark);
         self.scratch.children.truncate(children_mark);
         self.scratch.written.truncate(fragments.start);
@@ -512,7 +614,27 @@ impl<D: FrameDirty> Pass<'_, '_, D> {
             blending,
             disjoint,
             rigid,
+            order,
         }
+    }
+
+    /// The first order key painted after the child at `from` among this box's children, or
+    /// `after` when no later sibling indexes anything.
+    ///
+    /// Read off the siblings' folded ranges from the last pass. A sibling about to be composed
+    /// again keeps a range that is still a sound upper bound: whatever it becomes is placed
+    /// between the cursor and its own next sibling when its turn comes.
+    fn next_indexed_after(&self, from: usize, end: usize, after: HitOrder) -> HitOrder {
+        for index in from..end {
+            let sibling = self.scratch.children[index];
+            if let Some(&frag) = self.store.fragments_of_box(sibling).first()
+                && let Some(fragment) = self.store.fragment(frag)
+                && fragment.subtree_order.0 != HitOrder::MAX
+            {
+                return fragment.subtree_order.0;
+            }
+        }
+        after
     }
 
     /// How far this box's contents have moved, when that is all that happened to them.
@@ -529,12 +651,85 @@ impl<D: FrameDirty> Pass<'_, '_, D> {
             placed.descent.shift.1 - previous.1,
         );
         let usable =
-            placed.descent.layout_stable && placed.descent.matrix.is_none() && by != (0.0, 0.0);
+            placed.descent.origin_stable && placed.descent.matrix.is_none() && by != (0.0, 0.0);
         usable.then_some(rigid::Move {
             by,
+            kind: rigid::MoveKind::Scroll,
             clip: placed.descent.clip,
             shift: placed.descent.shift,
         })
+    }
+
+    /// Whether layout merely carried a child somewhere else, and by how much.
+    ///
+    /// The composing path exists for a box whose result changed; a box whose result differs from
+    /// what its fragments were composed from *only in where it is* has fragments that are right
+    /// in every respect but one, and everything below it is right in every respect. That is the
+    /// row after the row that grew, and there are as many of them as the list has rows.
+    ///
+    /// The claim needs the subtree to owe nothing, to be rigid — nothing sticky, fixed or
+    /// transformed below, since those read more than their own origin — and to be drawn through
+    /// no matrix, so that a vector in this space is a vector on the device. And it needs the
+    /// offset to be a whole number of device pixels with the far edges moving by the same one:
+    /// snapping rounds cumulative absolute edges, and an offset that is not whole can round some
+    /// edge below the other way, which is a box of a different shape and not a moved one.
+    ///
+    /// Answers the snapped result beside the move, which the caller adopts before carrying.
+    fn layout_shift(
+        &self,
+        child: BoxKey,
+        placed: &Placed,
+        generator: Option<zgui_dom::NodeKey>,
+    ) -> Option<(rigid::Move, taffy::Layout)> {
+        let owed = self.owed_by(child, generator);
+        if owed.own.intersects(ENTERS) || owed.subtree.intersects(ENTERS) {
+            return None;
+        }
+        if placed.descent.matrix.is_some() || !self.can_translate(child) {
+            return None;
+        }
+        let state = self.store.state(child)?;
+        let (new, old) = (state.unrounded, state.composed);
+        // Everything but where it is. The engine's `order` is left out on purpose: it is the
+        // child's index among its siblings, which a reorder moves for every row, and painting
+        // order is derived from the box tree rather than read from it.
+        let same_shape = new.size == old.size
+            && new.border == old.border
+            && new.padding == old.padding
+            && new.margin == old.margin
+            && new.content_size == old.content_size
+            && new.scrollbar_size == old.scrollbar_size;
+        if !same_shape {
+            return None;
+        }
+        let first = *self.store.fragments_of_box(child).first()?;
+        let fragment = self.store.fragment(first)?;
+        if fragment.kind != FragmentKind::Box {
+            return None;
+        }
+        let (snapped, edges) =
+            crate::round::snap::place(new, placed.descent.layout, placed.descent.rounded);
+        let shift = placed.descent.shift;
+        let held = fragment.border_box;
+        let dx = edges.left + shift.0 - held.origin.x.0;
+        let dy = edges.top + shift.1 - held.origin.y.0;
+        if dx.fract() != 0.0 || dy.fract() != 0.0 {
+            return None;
+        }
+        let far_x = edges.right + shift.0 - (held.origin.x.0 + held.size.width.0);
+        let far_y = edges.bottom + shift.1 - (held.origin.y.0 + held.size.height.0);
+        if far_x != dx || far_y != dy {
+            return None;
+        }
+        Some((
+            rigid::Move {
+                by: (dx, dy),
+                kind: rigid::MoveKind::Layout,
+                clip: placed.descent.clip,
+                shift,
+            },
+            snapped,
+        ))
     }
 
     /// Whether a clean child's cached fold can stand in for visiting it.
@@ -577,6 +772,7 @@ impl<D: FrameDirty> Pass<'_, '_, D> {
         let mut blending = false;
         let mut disjoint = true;
         let mut rigid = true;
+        let mut order = (HitOrder::MAX, 0);
         for (index, frag) in fragments.iter().enumerate() {
             let Some(fragment) = self.store.fragment(*frag) else {
                 continue;
@@ -591,12 +787,17 @@ impl<D: FrameDirty> Pass<'_, '_, D> {
                 .contains(FragmentFlags::HAS_BLENDING_DESCENDANT);
             disjoint &= fragment.subtree_disjoint;
             rigid &= fragment.subtree_rigid;
+            order = (
+                order.0.min(fragment.subtree_order.0),
+                order.1.max(fragment.subtree_order.1),
+            );
         }
         Folded {
             subtree_ink,
             blending,
             disjoint,
             rigid,
+            order,
         }
     }
 
@@ -610,6 +811,7 @@ impl<D: FrameDirty> Pass<'_, '_, D> {
         placed: &Placed,
         parent: Option<FragKey>,
         owed: &Owed,
+        between: (HitOrder, HitOrder),
     ) -> (core::ops::Range<usize>, bool) {
         let kinds_mark = self.scratch.kinds.len();
         self.kinds_of(key);
@@ -628,6 +830,22 @@ impl<D: FrameDirty> Pass<'_, '_, D> {
         }
         self.retire(key, keep);
 
+        // Where the pieces born below take their order keys: after the last piece kept and after
+        // everything painted before this box, and before the first thing its children index.
+        let born = count.saturating_sub(keep) as HitOrder;
+        let gap = (born > 0).then(|| {
+            let mut low = between.0;
+            for slot in 0..keep {
+                let kind = self.scratch.kinds[kinds_mark + slot];
+                if let Some(frag) = self.store.reusable_fragment(key, slot, kind)
+                    && let Some(held) = self.hit.order_of(frag)
+                {
+                    low = low.max(held);
+                }
+            }
+            (low, self.first_indexed_below(key, between.1))
+        });
+
         let written_mark = self.scratch.written.len();
         let mut moved = false;
         for slot in 0..count {
@@ -641,17 +859,41 @@ impl<D: FrameDirty> Pass<'_, '_, D> {
             let frag = match self.store.reusable_fragment(key, slot, kind) {
                 Some(frag) => frag,
                 None => {
-                    self.restacked = true;
+                    let (low, high) = gap.unwrap_or(between);
+                    let index = (slot - keep) as HitOrder + 1;
+                    // Spread evenly through the gap. A gap too narrow for the pieces born into
+                    // it hands out a key twice, and the renumber after the walk resolves it.
+                    let key_in_gap = if high.saturating_sub(low) > born {
+                        low + (high - low) / (born + 1) * index
+                    } else {
+                        self.renumber = true;
+                        low
+                    };
+                    self.born_order = Some(key_in_gap);
                     self.store.insert_fragment(key, |fragment| {
                         fragment.kind = kind;
                     })
                 }
             };
             moved |= self.update(frag, kind, &geometry, parent, owed) != Change::Identical;
+            self.born_order = None;
             self.scratch.written.push(frag);
         }
         self.scratch.kinds.truncate(kinds_mark);
         (written_mark..self.scratch.written.len(), moved)
+    }
+
+    /// The first order key indexed below `key`, or `after` when nothing below it is indexed yet.
+    fn first_indexed_below(&self, key: BoxKey, after: HitOrder) -> HitOrder {
+        for &child in &self.store.node(key).children {
+            if let Some(&frag) = self.store.fragments_of_box(child).first()
+                && let Some(fragment) = self.store.fragment(frag)
+                && fragment.subtree_order.0 != HitOrder::MAX
+            {
+                return fragment.subtree_order.0;
+            }
+        }
+        after
     }
 
     /// Drops every fragment of a box beyond the first `keep`, damaging what they covered.
@@ -923,10 +1165,14 @@ impl<D: FrameDirty> Pass<'_, '_, D> {
                 }
             }
             Change::TranslatedOnly => {
-                self.dirty.mark(
-                    owed.node,
-                    Dirty::REPOSITION | Dirty::REHIT | self.a11y(node),
-                );
+                self.dirty.mark(owed.node, Dirty::REPOSITION | Dirty::REHIT);
+                // Carried somewhere else and nothing else about it changed, which is the claim
+                // a move makes: a widget that moved owes a rectangle, and deriving its role,
+                // its name and its child list again to answer that is what makes a relayout of
+                // a long list cost a projection of every row.
+                if self.dirty.is_semantic(node) {
+                    self.dirty.moved(owed.node);
+                }
                 if let Some(previous) = &previous {
                     self.damage_beyond_a_move(previous.ink, Admitted::everything());
                 }
@@ -994,7 +1240,12 @@ impl<D: FrameDirty> Pass<'_, '_, D> {
     /// [`HitIndex::refresh`](crate::fragment::hit::HitIndex::refresh).
     fn touch_hit(&mut self, frag: FragKey, change: Change, stood: bool) {
         let scale = self.tables.device.scale;
-        let held = self.hit.entry(frag).map(|entry| entry.order).unwrap_or(0);
+        let held = self
+            .hit
+            .entry(frag)
+            .map(|entry| entry.order)
+            .or(self.born_order)
+            .unwrap_or(0);
         if let Some(entry) = crate::fragment::hit::entry_for(self.store, frag, held, scale) {
             match change {
                 Change::TranslatedOnly => self.hit.translate(frag, entry),
@@ -1012,6 +1263,7 @@ impl<D: FrameDirty> Pass<'_, '_, D> {
         blending: bool,
         disjoint: bool,
         rigid: bool,
+        order: (HitOrder, HitOrder),
     ) {
         for index in fragments {
             let frag = self.scratch.written[index];
@@ -1021,6 +1273,7 @@ impl<D: FrameDirty> Pass<'_, '_, D> {
             fragment.subtree_ink = subtree_ink;
             fragment.subtree_disjoint = disjoint;
             fragment.subtree_rigid = rigid;
+            fragment.subtree_order = order;
             fragment.flags = if blending {
                 fragment.flags.union(FragmentFlags::HAS_BLENDING_DESCENDANT)
             } else {

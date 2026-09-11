@@ -6,7 +6,7 @@
 //! child list that resolve to nodes a consumer then has to be told to ignore.
 
 use accesskit::NodeId;
-use zgui_dom::NodeKey;
+use zgui_dom::{NodeKey, NodeKind};
 
 use crate::id::to_a11y;
 use crate::world::World;
@@ -17,12 +17,18 @@ pub fn of(world: &World<'_>, node: NodeKey) -> Vec<NodeId> {
     let Some(index) = store.index_of(node) else {
         return Vec::new();
     };
+    // Attachment is answered once, for the parent: a child reached through the parent's own
+    // sibling chain hangs below it, so it is attached exactly when the parent is. Asking per child
+    // walks to the document node per child, which a container with thousands of them pays in full
+    // every time its child list is projected.
+    if !world.is_projected(node) {
+        return Vec::new();
+    }
     let mut children = Vec::new();
     let mut next = store.core(index).first_child();
     while let Some(child) = next {
-        let key = store.key_of(child);
-        if world.is_projected(key) {
-            children.push(to_a11y(key));
+        if matches!(store.core(child).kind(), NodeKind::Element) {
+            children.push(to_a11y(store.key_of(child)));
         }
         next = store.core(child).next_sibling();
     }
@@ -73,6 +79,7 @@ mod tests {
             placements: &zgui_scene::Placements::EMPTY,
             scale: 1.0,
             focus: None,
+            scroll: None,
         };
         let store = document.store();
         assert_eq!(

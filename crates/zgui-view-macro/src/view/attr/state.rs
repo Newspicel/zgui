@@ -49,7 +49,9 @@ fn unknown(name: &str, span: Span) -> syn::Error {
     ) {
         message.push_str(&format!(
             "\nnote: `{name}` is computed by the input system from what the pointer and the \
-             keyboard did, so a view cannot assert it"
+             keyboard did, so a view cannot assert it\n\
+             help: a headless test produces it by delivering `SurfaceEvent::Pointer` or \
+             `SurfaceEvent::Keyboard` through the platform harness"
         ));
     }
     if name == "selected" {

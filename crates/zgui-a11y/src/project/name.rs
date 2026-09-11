@@ -105,6 +105,7 @@ mod tests {
             placements: &zgui_scene::Placements::EMPTY,
             scale: 1.0,
             focus: None,
+            scroll: None,
         };
         assert_eq!(
             from_content(&world, document.store().key_of(root)).as_deref(),
@@ -127,6 +128,7 @@ mod tests {
             placements: &zgui_scene::Placements::EMPTY,
             scale: 1.0,
             focus: None,
+            scroll: None,
         };
         assert_eq!(from_content(&world, document.store().key_of(root)), None);
     }

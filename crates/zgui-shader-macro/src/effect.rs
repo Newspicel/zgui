@@ -48,7 +48,10 @@ impl Parse for Declaration {
             let key: Ident = input.parse()?;
             let field = key.to_string();
             if !seen.insert(field.clone()) {
-                return Err(syn::Error::new(key.span(), format!("`{field}` is written twice")));
+                return Err(syn::Error::new(
+                    key.span(),
+                    format!("`{field}` is written twice"),
+                ));
             }
             input.parse::<Token![:]>()?;
             match field.as_str() {
@@ -105,7 +108,10 @@ impl Parse for Declaration {
         let (mode, mode_span) =
             mode.ok_or_else(|| syn::Error::new(span, "a shader declares a `mode`"))?;
         let source = source.ok_or_else(|| {
-            syn::Error::new(span, "a shader declares its text, as either `source` or `path`")
+            syn::Error::new(
+                span,
+                "a shader declares its text, as either `source` or `path`",
+            )
         })?;
         Ok(Self {
             name,
@@ -247,10 +253,7 @@ fn read_source(source: &Source) -> Result<(String, Option<String>), syn::Error> 
             })?;
             let full = std::path::Path::new(&root).join(relative.value());
             let text = std::fs::read_to_string(&full).map_err(|error| {
-                syn::Error::new(
-                    relative.span(),
-                    format!("{}: {error}", full.display()),
-                )
+                syn::Error::new(relative.span(), format!("{}: {error}", full.display()))
             })?;
             Ok((text, Some(full.to_string_lossy().into_owned())))
         }
@@ -359,7 +362,10 @@ mod tests {
         assert!(
             accepted.is_ok(),
             "{}",
-            accepted.err().map(|error| error.to_string()).unwrap_or_default()
+            accepted
+                .err()
+                .map(|error| error.to_string())
+                .unwrap_or_default()
         );
     }
 
@@ -368,8 +374,14 @@ mod tests {
     #[test]
     fn every_mode_assembles_a_unit_that_compiles() {
         for (mode, body) in [
-            ("Paint", "fn shade(in: ShaderInput, params: Params) -> vec4<f32> { return vec4<f32>(1.0); }"),
-            ("Coverage", "fn coverage(in: ShaderInput, params: Params) -> f32 { return 1.0; }"),
+            (
+                "Paint",
+                "fn shade(in: ShaderInput, params: Params) -> vec4<f32> { return vec4<f32>(1.0); }",
+            ),
+            (
+                "Coverage",
+                "fn coverage(in: ShaderInput, params: Params) -> f32 { return 1.0; }",
+            ),
             (
                 "Filter",
                 "fn apply(in: ShaderInput, params: Params, beneath: texture_2d<f32>, \

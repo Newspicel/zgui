@@ -183,6 +183,48 @@ pub fn replay_a11y(harness: &zgui_platform_headless::Harness<zgui_runtime::Runti
     }
 }
 
+/// A consumer's copy of the tree, built from every update the window's surface was handed.
+///
+/// What an assistive technology holds after applying the whole sequence, which is the thing a
+/// claim about where a node *is* has to be checked against: a rectangle is stated relative to the
+/// nearest transform above it, and only the consumer composes them.
+pub fn a11y_tree(
+    harness: &zgui_platform_headless::Harness<zgui_runtime::Runtime>,
+) -> accesskit_consumer::Tree {
+    struct Silent;
+    impl accesskit_consumer::TreeChangeHandler for Silent {
+        fn node_added(&mut self, _: &accesskit_consumer::Node<'_>) {}
+        fn node_updated(
+            &mut self,
+            _: &accesskit_consumer::Node<'_>,
+            _: &accesskit_consumer::Node<'_>,
+        ) {
+        }
+        fn focus_moved(
+            &mut self,
+            _: Option<&accesskit_consumer::Node<'_>>,
+            _: Option<&accesskit_consumer::Node<'_>>,
+        ) {
+        }
+        fn node_removed(&mut self, _: &accesskit_consumer::Node<'_>) {}
+    }
+    let log = harness
+        .platform()
+        .offscreens()
+        .first()
+        .expect("a surface was created")
+        .a11y_log();
+    let mut updates = log.into_iter();
+    let first = updates
+        .next()
+        .expect("the window published an accessibility update");
+    let mut tree = accesskit_consumer::Tree::new(first, true);
+    for update in updates {
+        tree.update_and_process_changes(update, &mut Silent);
+    }
+    tree
+}
+
 /// Every line fragment in the window's layout, in the order the tree reports them.
 ///
 /// The plural of [`first_line_box`]: a fixture that wraps has a line box per line, and where the

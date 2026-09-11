@@ -2,8 +2,13 @@
 //!
 //! Many boxes share one cascade allocation — every row of a list, every item of a menu — so the
 //! store keeps one entry per distinct allocation and each box records which entry it holds. The
-//! entry is where per-style derivations will live: a lowering is computed once per entry rather
-//! than once per box, and dropped when the last box holding the entry lets go.
+//! entry is where per-style derivations live: a lowering is computed once per entry rather than
+//! once per box, and dropped when the last box holding the entry lets go.
+//!
+//! Distinct allocations can still agree on everything layout reads — a row whose background
+//! moved holds a fresh cascade result and the same box, position, margin, padding and border
+//! groups as before — so a lowering is filed under the identity of those groups as well, and an
+//! entry whose groups are already lowered takes that lowering rather than computing it again.
 
 use rustc_hash::FxHashMap;
 use zgui_css::ComputedStyle;
@@ -12,6 +17,52 @@ use zgui_profile::{Counter, counter};
 use crate::style::DeviceStyle;
 use crate::style::calc::CalcTable;
 use crate::style::lowered::LayoutStyle;
+
+/// The identity of everything a layout lowering reads.
+///
+/// Every field but the last is the address of one shared group of computed values; the cascade
+/// shares a group rather than copying it, so equal addresses hold equal values. Of the inherited
+/// text group only `text-align` is read, and it is keyed by value so that a colour change, which
+/// moves that group, does not move the key. An entry holds its style, which keeps every group the
+/// key names allocated for as long as the key is filed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct LayoutKey {
+    box_: usize,
+    position: usize,
+    margin: usize,
+    padding: usize,
+    border: usize,
+    inherited_box: usize,
+    text_align: u8,
+}
+
+impl LayoutKey {
+    fn of(style: &ComputedStyle) -> Self {
+        fn address<T>(group: &T) -> usize {
+            ::core::ptr::from_ref(group) as usize
+        }
+        Self {
+            box_: address(style.get_box()),
+            position: address(style.get_position()),
+            margin: address(style.get_margin()),
+            padding: address(style.get_padding()),
+            border: address(style.get_border()),
+            inherited_box: address(style.get_inherited_box()),
+            text_align: style.get_inherited_text().text_align as u8,
+        }
+    }
+}
+
+/// One lowering shared by every entry whose key it is filed under.
+#[derive(Debug)]
+struct Lowering {
+    /// The lowering itself; each holder keeps a clone.
+    style: LayoutStyle,
+    /// The `calc()` identifiers the lowering interned, released with the last holder.
+    calc_ids: Vec<u32>,
+    /// How many entries hold a clone.
+    holders: u32,
+}
 
 /// One document-local name for a distinct computed style.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -29,8 +80,8 @@ struct StyleEntry {
     refs: u32,
     /// The style in the layout algorithms' vocabulary, once a pass has asked for it.
     lowered: Option<LayoutStyle>,
-    /// The `calc()` identifiers the lowering interned, given back with it.
-    calc_ids: Vec<u32>,
+    /// What the lowering is filed under.
+    key: LayoutKey,
 }
 
 /// Every distinct computed style held by a live box.
@@ -42,6 +93,8 @@ pub(crate) struct StyleTable {
     free: Vec<u32>,
     /// Cascade allocation address to its slot.
     by_cascade: FxHashMap<usize, u32>,
+    /// The lowerings, by the identity of what they were lowered from.
+    by_layout: FxHashMap<LayoutKey, Lowering>,
     /// Slots waiting to be lowered.
     pending: Vec<u32>,
     /// The device every held lowering was lowered for.
@@ -72,7 +125,7 @@ impl StyleTable {
             style: style.clone(),
             refs: 1,
             lowered: None,
-            calc_ids: Vec::new(),
+            key: LayoutKey::of(style),
         };
         let index = match self.free.pop() {
             Some(index) => {
@@ -103,10 +156,30 @@ impl StyleTable {
         }
         let entry = self.entries[index].take().expect("the entry checked above");
         self.by_cascade.remove(&cascade_address(&entry.style));
-        for id in entry.calc_ids {
-            self.calc.release(id);
+        if entry.lowered.is_some() {
+            Self::let_go(&mut self.by_layout, &mut self.calc, entry.key);
         }
         self.free.push(slot.0);
+    }
+
+    /// Drops one hold on the lowering filed under `key`, releasing it with the last hold.
+    fn let_go(
+        by_layout: &mut FxHashMap<LayoutKey, Lowering>,
+        calc: &mut CalcTable,
+        key: LayoutKey,
+    ) {
+        let Some(lowering) = by_layout.get_mut(&key) else {
+            debug_assert!(false, "a lowered entry is filed under its key");
+            return;
+        };
+        lowering.holders -= 1;
+        if lowering.holders > 0 {
+            return;
+        }
+        let lowering = by_layout.remove(&key).expect("looked up above");
+        for id in lowering.calc_ids {
+            calc.release(id);
+        }
     }
 
     /// Lowers every style that owes a lowering for `device`.
@@ -118,14 +191,16 @@ impl StyleTable {
         if self.lowered_for != Some(device) {
             self.calc.set_scale(device.scale);
             self.pending.clear();
+            for lowering in self.by_layout.drain() {
+                for id in lowering.1.calc_ids {
+                    self.calc.release(id);
+                }
+            }
             for (index, entry) in self.entries.iter_mut().enumerate() {
                 let Some(entry) = entry.as_mut() else {
                     continue;
                 };
                 entry.lowered = None;
-                for id in entry.calc_ids.drain(..) {
-                    self.calc.release(id);
-                }
                 self.pending.push(index as u32);
             }
             self.lowered_for = Some(device);
@@ -139,8 +214,24 @@ impl StyleTable {
             if entry.lowered.is_some() {
                 continue;
             }
-            entry.lowered = Some(LayoutStyle::lower(&entry.style, device, &mut self.calc));
-            self.calc.drain_issued(&mut entry.calc_ids);
+            if let Some(shared) = self.by_layout.get_mut(&entry.key) {
+                shared.holders += 1;
+                entry.lowered = Some(shared.style.clone());
+                counter::bump(Counter::StylesLoweredFromCache);
+                continue;
+            }
+            let lowered = LayoutStyle::lower(&entry.style, device, &mut self.calc);
+            let mut calc_ids = Vec::new();
+            self.calc.drain_issued(&mut calc_ids);
+            self.by_layout.insert(
+                entry.key,
+                Lowering {
+                    style: lowered.clone(),
+                    calc_ids,
+                    holders: 1,
+                },
+            );
+            entry.lowered = Some(lowered);
             counter::bump(Counter::StylesLowered);
         }
     }
@@ -206,6 +297,55 @@ mod tests {
         assert_eq!(table.live(), 1, "one box still holds the entry");
         table.release(second);
         assert_eq!(table.live(), 0);
+    }
+
+    #[test]
+    fn two_cascades_that_agree_on_what_layout_reads_share_one_lowering() {
+        let mut table = StyleTable::default();
+        let mut first = StyleDraft::initial();
+        first.inherited_text().color =
+            zgui_css::values::color::AbsoluteColor::srgb_legacy(9, 0, 0, 1.0);
+        let first = first.build();
+        // Built from the first the way the cascade builds a sibling's result: every group the
+        // second does not touch is the first's own allocation.
+        let mut second = StyleDraft::from_style(&first);
+        second.inherited_text().color =
+            zgui_css::values::color::AbsoluteColor::srgb_legacy(0, 9, 0, 1.0);
+        let second = second.build();
+        let slots = [table.intern(&first), table.intern(&second)];
+        assert_ne!(slots[0], slots[1]);
+
+        table.ensure_lowered(DeviceStyle::default());
+        let _ = (table.lowered(slots[0]), table.lowered(slots[1]));
+        assert_eq!(table.by_layout.len(), 1, "a colour is nothing layout reads");
+        assert_eq!(
+            table.by_layout.values().next().map(|it| it.holders),
+            Some(2)
+        );
+        table.release(slots[0]);
+        assert_eq!(
+            table.by_layout.len(),
+            1,
+            "the other entry still holds the lowering"
+        );
+        table.release(slots[1]);
+        assert_eq!(table.by_layout.len(), 0);
+    }
+
+    #[test]
+    fn two_cascades_that_differ_in_text_align_lower_apart() {
+        let mut table = StyleTable::default();
+        let first = StyleDraft::initial().build();
+        let mut second = StyleDraft::from_style(&first);
+        second.inherited_text().text_align = zgui_css::values::text::TextAlignKeyword::MozCenter;
+        let second = second.build();
+        let slots = [table.intern(&first), table.intern(&second)];
+        table.ensure_lowered(DeviceStyle::default());
+        assert_eq!(table.by_layout.len(), 2);
+        assert_ne!(
+            table.lowered(slots[0]).text_align,
+            table.lowered(slots[1]).text_align
+        );
     }
 
     #[test]

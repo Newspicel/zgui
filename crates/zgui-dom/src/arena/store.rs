@@ -1,6 +1,6 @@
 //! Everything a worker thread can reach from a node handle.
 
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use style::shared_lock::SharedRwLock;
 use style::values::AtomIdent;
 use zgui_arena::{ChunkArena, DomainId};
@@ -58,6 +58,12 @@ pub struct DocumentStore {
     /// stylesheet-dependency filter beside them: that one is answered from a compiled rule set,
     /// which cannot be sent between threads, so it is passed to each call instead of stored.
     host: HostSeams,
+    /// The marked children of every node whose dirty-child record outgrew its own slots.
+    ///
+    /// Behind a lock rather than a cell because the record is widened through a shared borrow of
+    /// the store; the lock is taken for one insertion or one read and never held across a call
+    /// out of this module. See [`DirtyChildren`](crate::dirty::children::DirtyChildren).
+    dirty_overflow: std::sync::Mutex<FxHashMap<NodeIndex, FxHashSet<NodeIndex>>>,
 }
 
 const _: () = crate::assert_sync::<DocumentStore>();
@@ -77,7 +83,17 @@ impl DocumentStore {
             document,
             interned_runs: FxHashMap::default(),
             host: HostSeams::new(),
+            dirty_overflow: std::sync::Mutex::new(FxHashMap::default()),
         }
+    }
+
+    /// The overflow sets of the dirty-child records, locked.
+    pub(crate) fn dirty_overflow(
+        &self,
+    ) -> std::sync::MutexGuard<'_, FxHashMap<NodeIndex, FxHashSet<NodeIndex>>> {
+        self.dirty_overflow
+            .lock()
+            .unwrap_or_else(|held| held.into_inner())
     }
 
     /// The hooks a consumer has installed on this document.

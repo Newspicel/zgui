@@ -16,7 +16,7 @@ use zgui_geom::{DevicePx, Point, Rect, Size};
 use zgui_platform::Surface;
 use zgui_platform_headless::Harness;
 use zgui_runtime::{App, AppError, Runtime};
-use zgui_shader::{ShaderEffect, ShaderHandle, ShaderParams, ShaderPainterExt, shader};
+use zgui_shader::{ShaderEffect, ShaderHandle, ShaderPainterExt, ShaderParams, shader};
 use zgui_view::{Anchor, BuildCx, IntoView, View};
 
 /// What the fixture effect draws with.

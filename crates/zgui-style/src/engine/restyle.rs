@@ -56,6 +56,13 @@ pub struct TextPaintUpdate {
     pub run: TextRun,
     /// What the text is now drawn in.
     pub paint: TextPaint,
+    /// Whether this element was reported before, under a different cascade result.
+    ///
+    /// The consumer keeps a record for every element it was told about, and an element with no
+    /// record has nothing shaped. An element arriving with `restyled` set and no record is an
+    /// element whose earlier report was lost, and whatever it shaped in between names a slot the
+    /// consumer does not know — so the consumer treats its shaping as wrong.
+    pub restyled: bool,
 }
 
 impl StyleEngine {
@@ -218,6 +225,7 @@ impl StyleEngine {
                     index: record.index,
                     run: TextRun::Own,
                     paint: paint(&style),
+                    restyled: previous_text.is_some(),
                 });
             }
 
@@ -238,6 +246,7 @@ impl StyleEngine {
                         index: record.index,
                         run,
                         paint: paint(pseudo),
+                        restyled: previous_pseudos.is_some(),
                     });
                 }
             }

@@ -94,7 +94,8 @@ impl Edit<'_> {
         child: NodeIndex,
         before: Option<NodeIndex>,
     ) {
-        let moved = self.store().core(child).parent().is_some();
+        let old_parent = self.store().core(child).parent();
+        let moved = old_parent.is_some();
         if moved {
             self.take_out(child);
         }
@@ -121,8 +122,28 @@ impl Edit<'_> {
         }
 
         ancestors::mark(store, parent, Dirty::CHILDREN);
-        ancestors::mark(store, child, Dirty::RESTYLE | Dirty::A11Y);
+        if moved && old_parent == Some(parent) {
+            // A node that moved among its own siblings is the same accessibility node it was,
+            // with the same children below it; what changed is the parent's child list, and where
+            // the node is, which the fragment pass reports when it carries the node's boxes.
+            ancestors::mark(store, child, Dirty::RESTYLE);
+            ancestors::mark(store, parent, Dirty::A11Y);
+        } else {
+            ancestors::mark(store, child, Dirty::RESTYLE | Dirty::A11Y);
+        }
         if moved {
+            // A node that moved changes where its siblings are laid out and drawn without any of
+            // them changing, exactly as a removal does — so the parent owes the same layout and
+            // paint a removal owes it. Nothing else records that: a reorder restyles nothing and
+            // rebuilds no box, and a fragment pass that read only the marks would find the parent
+            // where it was, holding the result it had, and leave every moved row where it stood.
+            ancestors::mark(store, parent, Dirty::RELAYOUT | Dirty::REPAINT);
+        }
+        // Only a move to another parent changes what the subtree inherits. A move among its own
+        // siblings — a keyed list reordering its rows — keeps the same parent style, so nothing
+        // below the moved node cascades differently; what its new position changes in selector
+        // matching is recorded through the structure record above.
+        if moved && old_parent != Some(parent) {
             batch
                 .hints
                 .record(store, child, RestyleHint::RECASCADE_DESCENDANTS);

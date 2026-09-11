@@ -57,7 +57,12 @@ pub fn bleed(rect: Rect<DevicePx, Device>, filters: &[Filter]) -> Rect<DevicePx,
 pub fn paints_nothing(style: &ComputedStyle, border: Edges<DevicePx>) -> bool {
     let background = style.get_background();
     border == Edges::ZERO
-        && to_color(&background.background_color.resolve_to_absolute(current(style))).alpha()
+        && to_color(
+            &background
+                .background_color
+                .resolve_to_absolute(current(style)),
+        )
+        .alpha()
             == 0.0
         && background
             .background_image

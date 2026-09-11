@@ -831,3 +831,69 @@ fn an_inbound_scroll_offset_moves_the_container_it_names() {
         "the container never moved, so the action was advertised and dropped"
     );
 }
+
+/// A list whose fifth row grows: the rows below it move, and their cells do not move within them.
+#[test]
+fn a_row_that_moves_rewrites_its_own_node_and_none_of_its_cells() {
+    const ROWS: usize = 20;
+    let tall = RwSignal::new_local(false);
+    let last_cell = NodeRef::new();
+    let mut harness = support::app_with_text(
+        "root { display: block; width: 400px; height: 300px }
+         .row { display: block; width: 400px; height: 10px }
+         .row.tall { height: 80px }
+         control { display: block; width: 120px; height: 10px }",
+        move |cx: &mut zgui_view::BuildCx<'_>| {
+            let mut list = zgui_elements::column().class("root");
+            for index in 0..ROWS {
+                let mut row = zgui_elements::column().class("row");
+                if index == 5 {
+                    row = row.class_toggle(zgui_view::ClassName::new("tall"), move || tall.get());
+                }
+                let mut cell =
+                    zgui_elements::control().a11y(A11yBinding::new(Role::Button).label("Open"));
+                if index == ROWS - 1 {
+                    cell = cell.node_ref(last_cell);
+                }
+                list = list.child(row.child(cell));
+            }
+            Box::new(list.into_view().build(cx))
+        },
+    );
+    harness.settle(8);
+    let target = bound_id(last_cell);
+
+    tall.set(true);
+    harness.settle(8);
+
+    let update = published(&harness);
+    let buttons = update
+        .nodes
+        .iter()
+        .filter(|(_, node)| node.role() == Role::Button)
+        .count();
+    assert_eq!(
+        buttons,
+        0,
+        "a cell that did not move within its row was re-sent:\n{}",
+        zgui_a11y::dump(&update)
+    );
+    assert!(
+        update.nodes.len() <= ROWS,
+        "{} nodes for a row that grew and the rows below it:\n{}",
+        update.nodes.len(),
+        zgui_a11y::dump(&update)
+    );
+
+    // What the consumer holds composes to where layout put the cell: nineteen rows above it,
+    // one of them eighty pixels tall.
+    let tree = support::a11y_tree(&harness);
+    let state = tree.state();
+    let cell = state
+        .node_by_tree_local_id(target, TreeId::ROOT)
+        .expect("the cell is in the tree");
+    let composed = cell.bounding_box().expect("the cell has a rectangle");
+    assert_eq!(composed.y0, 18.0 * 10.0 + 80.0, "{composed:?}");
+    assert_eq!(composed.height(), 10.0, "{composed:?}");
+    assert_every_update_resolves(&harness);
+}

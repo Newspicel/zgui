@@ -175,7 +175,10 @@ mod tests {
             &[],
             -3.0,
         );
-        assert_eq!(named("test-negative-reach").map(|held| held.reach), Some(0.0));
+        assert_eq!(
+            named("test-negative-reach").map(|held| held.reach),
+            Some(0.0)
+        );
     }
 
     #[test]
@@ -185,15 +188,33 @@ mod tests {
 
     #[test]
     fn handles_are_never_reused_and_resolve_back_to_their_declaration() {
-        let first = declare("test-one", ShaderMode::Paint, ShaderReads::NOTHING, &[], 0.0);
-        let second = declare("test-two", ShaderMode::Paint, ShaderReads::NOTHING, &[], 0.0);
+        let first = declare(
+            "test-one",
+            ShaderMode::Paint,
+            ShaderReads::NOTHING,
+            &[],
+            0.0,
+        );
+        let second = declare(
+            "test-two",
+            ShaderMode::Paint,
+            ShaderReads::NOTHING,
+            &[],
+            0.0,
+        );
         assert_ne!(first, second);
         assert_eq!(by_id(first).map(|held| held.name), Some("test-one"));
     }
 
     #[test]
     fn the_last_declaration_of_a_name_is_the_one_it_resolves_to() {
-        declare("test-twice", ShaderMode::Paint, ShaderReads::NOTHING, &[], 0.0);
+        declare(
+            "test-twice",
+            ShaderMode::Paint,
+            ShaderReads::NOTHING,
+            &[],
+            0.0,
+        );
         let second = declare(
             "test-twice",
             ShaderMode::Coverage,

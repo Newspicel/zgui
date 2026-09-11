@@ -152,6 +152,58 @@ impl Fixture {
         result
     }
 
+    /// The same, and then carries the new styles into `store`'s boxes, marking what has to be
+    /// laid out again.
+    ///
+    /// What a frame does between its cascade and its layout, for a test that holds a box tree
+    /// across an edit.
+    pub(crate) fn edit_restyle_and_patch<R>(
+        &mut self,
+        store: &mut LayoutStore,
+        body: impl FnOnce(&mut zgui_dom::Edit<'_>) -> R,
+    ) -> R {
+        let filter = self.engine.filter();
+        let result = self
+            .document
+            .edit(&filter, body)
+            .expect("the document is not poisoned");
+        let pass = self.engine.restyle(&mut self.document, None);
+        zgui_layout::boxtree::patch::style::restyle(store, &self.document, &pass.styled_nodes());
+        result
+    }
+
+    /// The same, and then brings `store`'s box tree into agreement with the document: splicing
+    /// what the edit added, removed or moved, carrying the new styles, and rewriting text.
+    ///
+    /// What a frame does between its cascade and its layout, for a test that holds a box tree
+    /// across a structural edit.
+    pub(crate) fn edit_and_sync_boxes<R>(
+        &mut self,
+        store: &mut LayoutStore,
+        body: impl FnOnce(&mut zgui_dom::Edit<'_>) -> R,
+    ) -> R {
+        let filter = self.engine.filter();
+        let result = self
+            .document
+            .edit(&filter, body)
+            .expect("the document is not poisoned");
+        let pass = self.engine.restyle(&mut self.document, None);
+        let root = self.document.root_index().expect("a root element");
+        let owed = zgui_layout::boxtree::retire(&mut self.document, root);
+        if !owed.is_empty()
+            && zgui_layout::boxtree::patch::rebuild(store, &self.document, &owed).is_none()
+        {
+            zgui_layout::boxtree::build(store, &self.document);
+        }
+        zgui_layout::boxtree::patch::style::restyle(store, &self.document, &pass.styled_nodes());
+        if zgui_layout::boxtree::patch::retext(store, &self.document, root)
+            == zgui_layout::boxtree::patch::Retext::Rebuild
+        {
+            zgui_layout::boxtree::build(store, &self.document);
+        }
+        result
+    }
+
     /// The box tree for this document.
     pub(crate) fn box_tree(&self) -> LayoutStore {
         let mut store = LayoutStore::new(self.document.store().document());

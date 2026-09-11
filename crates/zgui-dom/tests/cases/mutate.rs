@@ -207,7 +207,7 @@ fn structural_change_interleaved_with_marking_leaves_nothing_unreachable() {
         let (mut document, root, children) = tree(14);
         let mut live: Vec<NodeIndex> = children.clone();
         live.push(root);
-        // Non-vacuity: the run form has to be reached, or the case only measures the exact list.
+        // Non-vacuity: the wide form has to be reached, or the case only measures the exact list.
         let mut spans = 0;
         edit::retire(&mut document);
 
@@ -215,7 +215,7 @@ fn structural_change_interleaved_with_marking_leaves_nothing_unreachable() {
             match rng.below(4) {
                 0 => {
                     // Biased towards one wide child list, because the record only degrades to the
-                    // run form on the fifth distinct marked child of a single parent, and a tree
+                    // wide form on the fifth distinct marked child of a single parent, and a tree
                     // that spreads its changes evenly never reaches it.
                     let parent = if rng.below(3) == 0 {
                         live[rng.below(live.len())]
@@ -266,7 +266,7 @@ fn structural_change_interleaved_with_marking_leaves_nothing_unreachable() {
                     } else {
                         nth_child(&document, root, &mut rng).unwrap_or(root)
                     };
-                    if document.store().core(root).dirty_children().is_span() {
+                    if document.store().core(root).dirty_children().is_wide() {
                         spans += 1;
                     }
                     propagate::mark(document.store_mut(), node, bits[rng.below(bits.len())]);
@@ -276,7 +276,7 @@ fn structural_change_interleaved_with_marking_leaves_nothing_unreachable() {
 
         assert!(
             spans > 0,
-            "seed {seed}: the dirty-child record never reached the run form"
+            "seed {seed}: the dirty-child record never reached the wide form"
         );
         let mut owing: Vec<NodeIndex> = attached(&document)
             .into_iter()
@@ -371,7 +371,7 @@ fn moving_the_end_of_a_dirty_run_to_the_front_keeps_it_reachable() {
     for index in [2, 3, 5, 6, 7] {
         propagate::mark(document.store_mut(), children[index], Dirty::RESTYLE);
     }
-    assert!(document.store().core(root).dirty_children().is_span());
+    assert!(document.store().core(root).dirty_children().is_wide());
 
     document
         .edit(&EverythingMatters, |batch| {

@@ -306,6 +306,7 @@ impl Painter {
         stacking::walk(input.store, root, &mut pass);
         let report = pass.report;
         self.cache.end_frame();
+        self.styles.sweep();
         report
     }
 

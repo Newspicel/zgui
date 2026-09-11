@@ -14,6 +14,7 @@
 //! And a stacking context is named by the box that establishes it, so its identifier is stable from
 //! frame to frame without anything having to allocate one.
 
+use std::borrow::Cow;
 use zgui_css::values::effect::{IsolationValue, MixBlendModeValue};
 use zgui_css::values::size::{PositionValue, ZIndexValue};
 use zgui_dom::side::BoxKey;
@@ -145,19 +146,63 @@ pub fn paint_order(store: &LayoutStore, root: BoxKey) -> Vec<BoxKey> {
 /// Appends one box and everything below it, in painting order.
 fn push_subtree(store: &LayoutStore, key: BoxKey, order: &mut Vec<BoxKey>) {
     order.push(key);
+    for &child in children_in_paint_order(store, key).iter() {
+        push_subtree(store, child, order);
+    }
+}
+
+/// Whether one box's children are painted in the order they are laid out.
+///
+/// True of nearly every box: a container of ordinary block or inline children puts all of them in
+/// one pass at one index. A container holding a positioned child, a float or a `z-index` paints
+/// them in another order, and anything placing a newborn fragment among its siblings by their
+/// layout position has to know that.
+pub fn children_in_layout_order(store: &LayoutStore, key: BoxKey) -> bool {
     let Some(node) = store.get(key) else {
-        return;
+        return true;
     };
-    let mut children: Vec<(PaintLevel, i32, usize, BoxKey)> = node
+    let mut ranks = node
+        .children
+        .iter()
+        .map(|&child| (level(store, child) as u8, z_index(store, child)));
+    let mut previous = ranks.next();
+    ranks.all(|rank| {
+        let ordered = previous.is_some_and(|last| last <= rank);
+        previous = Some(rank);
+        ordered
+    })
+}
+
+/// One box's children, in the order they are painted.
+///
+/// The sort is stable, so two children in the same pass with the same `z-index` keep the order they
+/// are laid out in — which is the tie-break the specification gives, and which `order` on a flex
+/// item has already moved, exactly as it moves painting.
+///
+/// Borrowed where the two orders already agree, which is nearly every box; recognising it costs one
+/// walk and saves two allocations and the sort, per box, per pass.
+pub fn children_in_paint_order(store: &LayoutStore, key: BoxKey) -> Cow<'_, [BoxKey]> {
+    let Some(node) = store.get(key) else {
+        return Cow::Borrowed(&[]);
+    };
+    if children_in_layout_order(store, key) {
+        return Cow::Borrowed(&node.children);
+    }
+    let mut children: Vec<(u8, i32, usize, BoxKey)> = node
         .children
         .iter()
         .enumerate()
-        .map(|(position, &child)| (level(store, child), z_index(store, child), position, child))
+        .map(|(position, &child)| {
+            (
+                level(store, child) as u8,
+                z_index(store, child),
+                position,
+                child,
+            )
+        })
         .collect();
-    children.sort_by_key(|(level, index, position, _)| (*level, *index, *position));
-    for (_, _, _, child) in children {
-        push_subtree(store, child, order);
-    }
+    children.sort_by_key(|(pass, index, position, _)| (*pass, *index, *position));
+    Cow::Owned(children.into_iter().map(|(_, _, _, child)| child).collect())
 }
 
 #[cfg(test)]

@@ -52,6 +52,66 @@ struct Covering {
     agreed: bool,
 }
 
+/// Which slot each element's text is drawn through, with the counts a batch is decided by.
+///
+/// The counts are kept beside the records rather than derived from them per batch: a document
+/// with twenty thousand strings restyles one of them on most frames, and rebuilding two maps
+/// over every record to answer for one is what charges a whole document's worth of work to a
+/// frame that changed one element.
+#[derive(Default)]
+pub(crate) struct TextSlots {
+    /// The record per element run.
+    slots: FxHashMap<SlotKey, TextSlot>,
+    /// How many records are drawn through each slot.
+    owners: FxHashMap<PaintSlot, usize>,
+    /// How many records answer to each cascade result's address.
+    holders: FxHashMap<u64, usize>,
+}
+
+impl TextSlots {
+    /// The record for one element run, if it has been reported.
+    pub(crate) fn get(&self, key: &SlotKey) -> Option<&TextSlot> {
+        self.slots.get(key)
+    }
+
+    /// Files `held` under `key`, returning what it replaced.
+    fn insert(&mut self, key: SlotKey, held: TextSlot) -> Option<TextSlot> {
+        *self.owners.entry(held.slot).or_default() += 1;
+        *self.holders.entry(address(&held.key)).or_default() += 1;
+        let previous = self.slots.insert(key, held);
+        if let Some(previous) = &previous {
+            self.release(previous);
+        }
+        previous
+    }
+
+    /// Takes the counts a record contributed back.
+    fn release(&mut self, held: &TextSlot) {
+        if let Some(count) = self.owners.get_mut(&held.slot) {
+            *count -= 1;
+            if *count == 0 {
+                self.owners.remove(&held.slot);
+            }
+        }
+        if let Some(count) = self.holders.get_mut(&address(&held.key)) {
+            *count -= 1;
+            if *count == 0 {
+                self.holders.remove(&address(&held.key));
+            }
+        }
+    }
+
+    /// How many records are drawn through `slot`.
+    fn owners_of(&self, slot: PaintSlot) -> usize {
+        self.owners.get(&slot).copied().unwrap_or_default()
+    }
+
+    /// Whether any record still answers to the cascade result at `address`.
+    fn held_by_anyone(&self, address: u64) -> bool {
+        self.holders.contains_key(&address)
+    }
+}
+
 /// Which slot one element's text is drawn through.
 pub(crate) struct TextSlot {
     /// The slot itself, which is what everything already shaped names.
@@ -95,7 +155,7 @@ pub(crate) struct TextSlot {
 /// make a theme flip in which any single element's colour is unchanged look like a document-wide
 /// split.
 pub(crate) fn apply(
-    slots: &mut FxHashMap<SlotKey, TextSlot>,
+    slots: &mut TextSlots,
     table: &mut TextPaintTable,
     updates: &[TextPaintUpdate],
 ) -> Vec<SlotKey> {
@@ -133,12 +193,14 @@ pub(crate) fn apply(
                 });
         }
     }
-    let mut owners: FxHashMap<PaintSlot, usize> = FxHashMap::default();
-    let mut holders: FxHashMap<u64, usize> = FxHashMap::default();
-    for held in slots.values() {
-        *owners.entry(held.slot).or_default() += 1;
-        *holders.entry(address(&held.key)).or_default() += 1;
-    }
+    // How many records each touched slot is drawn through *before* the batch. Read once, because
+    // the loop below moves records off their slots as it goes: a count read as each update is
+    // decided would fall to the batch's own size by its last update, and the slot would then be
+    // rewritten in place under the elements that stayed on it.
+    let owners_at_start: FxHashMap<PaintSlot, usize> = covered
+        .keys()
+        .map(|slot| (*slot, slots.owners_of(*slot)))
+        .collect();
 
     let mut split = Vec::new();
     for (update, moved) in updates.iter().zip(&recoloured) {
@@ -153,7 +215,7 @@ pub(crate) fn apply(
                 establish(table, claimed, slot);
                 slot
             }
-            Some(held) if rewritable_in_place(&covered, &owners, held.slot) => {
+            Some(held) if rewritable_in_place(&covered, &owners_at_start, held.slot) => {
                 let slot = held.slot;
                 table.set(slot, paint);
                 // The new cascade result is pointed at the slot everything already shaped still
@@ -167,7 +229,12 @@ pub(crate) fn apply(
                 // An element leaving a slot that other elements still use cannot be re-coloured by
                 // writing through it, and what its glyphs name was baked in when they were shaped.
                 // The shaping is what has to go.
-                if other.is_some() {
+                //
+                // So does the shaping of an element that was restyled before and has no record
+                // here: its earlier report was never applied, and whatever it shaped meanwhile
+                // claimed a slot of its own that nothing rewrites. Reporting it as split is what
+                // gets that shaping dropped instead of drawn in the old colour for ever.
+                if other.is_some() || update.restyled {
                     split.push((update.node, update.run));
                 }
                 let slot = table.slot_for(claimed, || paint);
@@ -175,9 +242,8 @@ pub(crate) fn apply(
                 slot
             }
         };
-        *holders.entry(claimed).or_default() += 1;
         let previous = slots.insert((update.node, update.run), TextSlot { slot, key });
-        retire(table, &mut holders, previous, claimed);
+        retire(table, slots, previous, claimed);
     }
     split
 }
@@ -229,27 +295,15 @@ fn rewritable_in_place(
 /// The count matters: siblings that cascaded to one result share the address, and forgetting it
 /// while one of them still names it would send that one's next paragraph to a slot of its own,
 /// which is a slot nothing rewrites when the colour next moves.
-fn retire(
-    table: &mut TextPaintTable,
-    holders: &mut FxHashMap<u64, usize>,
-    previous: Option<TextSlot>,
-    claimed: u64,
-) {
+fn retire(table: &mut TextPaintTable, slots: &TextSlots, previous: Option<TextSlot>, claimed: u64) {
     let Some(previous) = previous else {
         return;
     };
     let address = address(&previous.key);
-    if address == claimed {
+    if address == claimed || slots.held_by_anyone(address) {
         return;
     }
-    let Some(count) = holders.get_mut(&address) else {
-        return;
-    };
-    *count -= 1;
-    if *count == 0 {
-        holders.remove(&address);
-        table.forget(address);
-    }
+    table.forget(address);
 }
 
 /// The number the table files a cascade result under.
@@ -259,7 +313,6 @@ fn address(key: &TextPaintKey) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use rustc_hash::FxHashMap;
     use zgui_arena::{DomainId, Generation};
     use zgui_color::Color;
     use zgui_css::{PinnedGroup, StyleDraft};
@@ -268,7 +321,7 @@ mod tests {
     use zgui_style::{TextPaintUpdate, TextRun};
     use zgui_text_style::TextPaintKey;
 
-    use super::{SlotKey, TextSlot, apply};
+    use super::{TextSlot, TextSlots, apply};
 
     /// A cascade result of its own, which is what one restyle of one element produces.
     fn cascade_result() -> TextPaintKey {
@@ -295,15 +348,16 @@ mod tests {
                 key: cascade_result(),
                 color,
             },
+            restyled: false,
         }
     }
 
     /// Two elements drawn through one slot, which is what aliasing leaves behind.
-    fn sharing_one_slot(color: Color) -> (FxHashMap<SlotKey, TextSlot>, TextPaintTable, PaintSlot) {
+    fn sharing_one_slot(color: Color) -> (TextSlots, TextPaintTable, PaintSlot) {
         let mut table = TextPaintTable::new();
         let shared = cascade_result();
         let slot = table.slot_for(super::address(&shared), || TextPaint::new(color));
-        let mut slots: FxHashMap<SlotKey, TextSlot> = FxHashMap::default();
+        let mut slots = TextSlots::default();
         for n in [1, 2] {
             slots.insert(
                 (node(n), TextRun::Own),
@@ -317,7 +371,7 @@ mod tests {
     }
 
     /// The colour an element is drawn in after a batch, read the way a shaped run reads it.
-    fn drawn(slots: &FxHashMap<SlotKey, TextSlot>, table: &TextPaintTable, n: u32) -> TextPaint {
+    fn drawn(slots: &TextSlots, table: &TextPaintTable, n: u32) -> TextPaint {
         let held = slots
             .get(&(node(n), TextRun::Own))
             .expect("the element was given a slot");
@@ -349,8 +403,8 @@ mod tests {
             "the second element took the first's colour"
         );
         assert_ne!(
-            slots[&(node(1), TextRun::Own)].slot,
-            slots[&(node(2), TextRun::Own)].slot,
+            slots.get(&(node(1), TextRun::Own)).map(|held| held.slot),
+            slots.get(&(node(2), TextRun::Own)).map(|held| held.slot),
             "two colours cannot be held by one slot"
         );
         let _ = shared;
@@ -380,7 +434,7 @@ mod tests {
         // The element's own slot, claimed against a result of its own and drawn in its own colour.
         let own_result = cascade_result();
         let own = table.slot_for(super::address(&own_result), || TextPaint::new(grey(0.5)));
-        let mut slots: FxHashMap<SlotKey, TextSlot> = FxHashMap::default();
+        let mut slots = TextSlots::default();
         slots.insert(
             (node(1), TextRun::Own),
             TextSlot {
@@ -399,6 +453,7 @@ mod tests {
                 key: inherited.clone(),
                 color: grey(0.1),
             },
+            restyled: true,
         };
         apply(&mut slots, &mut table, &[arriving]);
 
@@ -413,6 +468,63 @@ mod tests {
             Some(&TextPaint::new(grey(0.1))),
             "the result's own slot stopped holding the result's colour"
         );
+    }
+
+    /// Some of the elements sharing a slot leave it together, agreeing on where to.
+    ///
+    /// The slot is still drawn through by the elements that stayed, so it cannot be rewritten in
+    /// place however many of the leavers agree — and the count that decides that has to be the
+    /// count *before* the batch. Read as the batch moves records off the slot, it reaches the
+    /// number of leavers on the last of them, and that one rewrites the slot under everyone else.
+    #[test]
+    fn leavers_that_agree_still_leave_a_slot_others_stay_on() {
+        let mut table = TextPaintTable::new();
+        let shared = cascade_result();
+        let slot = table.slot_for(super::address(&shared), || TextPaint::new(grey(0.1)));
+        let mut slots = TextSlots::default();
+        for n in 1..=7 {
+            slots.insert(
+                (node(n), TextRun::Own),
+                TextSlot {
+                    slot,
+                    key: shared.clone(),
+                },
+            );
+        }
+
+        let leaving = cascade_result();
+        let updates: Vec<TextPaintUpdate> = (1..=4)
+            .map(|n| TextPaintUpdate {
+                node: node(n),
+                index: zgui_dom::NodeIndex::new(n),
+                run: TextRun::Own,
+                paint: zgui_text_style::TextPaint {
+                    key: leaving.clone(),
+                    color: grey(0.9),
+                },
+                restyled: true,
+            })
+            .collect();
+        let split = apply(&mut slots, &mut table, &updates);
+
+        assert_eq!(
+            table.get(slot),
+            Some(&TextPaint::new(grey(0.1))),
+            "the slot the three that stayed draw through was rewritten under them"
+        );
+        let mut named: Vec<u32> = split.iter().map(|(node, _)| node.index()).collect();
+        named.sort_unstable();
+        assert_eq!(
+            named,
+            vec![1, 2, 3, 4],
+            "every leaver has to be shaped again"
+        );
+        for n in 1..=4 {
+            assert_eq!(drawn(&slots, &table, n), TextPaint::new(grey(0.9)));
+        }
+        for n in 5..=7 {
+            assert_eq!(drawn(&slots, &table, n), TextPaint::new(grey(0.1)));
+        }
     }
 
     /// The path the divergence guard must not cost anything: a theme flip, where every element
@@ -432,7 +544,10 @@ mod tests {
             "a colour that can be written through the slot costs no shaping"
         );
         for n in [1, 2] {
-            assert_eq!(slots[&(node(n), TextRun::Own)].slot, shared);
+            assert_eq!(
+                slots.get(&(node(n), TextRun::Own)).map(|held| held.slot),
+                Some(shared)
+            );
             assert_eq!(drawn(&slots, &table, n), TextPaint::new(grey(0.9)));
         }
     }

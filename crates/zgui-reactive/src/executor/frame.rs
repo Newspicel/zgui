@@ -13,9 +13,10 @@ pub struct FlushOutcome {
     ///
     /// An effect that writes a signal makes another effect ready, but the wake it raises is
     /// suppressed — asking the platform for a redraw from inside the frame that is already
-    /// running would be a wake per write. The frame loop requests exactly one redraw when this
-    /// is true, which is also what carries a task set aside by the iteration budget into the
-    /// next frame.
+    /// running would be a wake per write — and serviced by the flush itself where it can be. The
+    /// frame loop requests exactly one redraw when this is true, which is what carries a wake the
+    /// flush stopped polling before, and a task set aside by the iteration budget, into the next
+    /// frame.
     pub needs_another_frame: bool,
     /// Whether at least one task exceeded the per-flush iteration budget.
     ///
@@ -32,7 +33,11 @@ struct FlushState {
     /// Increments once per flush; the iteration budget is charged per generation.
     generation: u64,
     /// Set by a wake raised while the flush is running.
-    needs_another_frame: bool,
+    ///
+    /// A wake raised by a task the pool is polling is serviced by the same poll, so a wake alone
+    /// owes nothing. Only a wake the flush stopped polling before — the pool stalled and something
+    /// woke a task afterwards — becomes a frame.
+    woke: bool,
     /// Whether any task was set aside by the budget in this flush.
     budget_exhausted: bool,
     /// Wakers of the tasks the budget set aside, woken once the flush has returned.
@@ -71,7 +76,7 @@ pub fn flush() -> FlushOutcome {
         }
         state.running = true;
         state.generation += 1;
-        state.needs_another_frame = false;
+        state.woke = false;
         state.budget_exhausted = false;
         true
     });
@@ -79,6 +84,7 @@ pub fn flush() -> FlushOutcome {
         return FlushOutcome::default();
     }
 
+    let mut woke_after_stall = false;
     {
         // Clears the flag even if a task panics. Left set, it would make every later flush look
         // re-entrant and silently do nothing, which is a frozen window with no further error.
@@ -86,25 +92,41 @@ pub fn flush() -> FlushOutcome {
         // Before the pool, so what a closure posted from another thread writes is settled by this
         // frame rather than by the next one — the same ordering the timer heap already uses.
         crate::task::drain_ui_queue();
-        context::enter(pool::poll);
+        // The pool polls every task woken while it runs, so an effect writing a signal another
+        // effect reads is settled in this same poll. What a poll cannot see is a wake that lands
+        // between its stall and its return; polling again is the one thing that tells the two
+        // apart, and a poll with nothing to do costs a queue check. The rounds are bounded so
+        // that a task waking itself from outside the budget cannot hold the frame.
+        for round in 0..MAX_ROUNDS {
+            context::enter(pool::poll);
+            let woke = FLUSH.with_borrow_mut(|state| std::mem::take(&mut state.woke));
+            if !woke {
+                break;
+            }
+            if round + 1 == MAX_ROUNDS {
+                woke_after_stall = true;
+            }
+        }
     }
 
     FLUSH.with_borrow_mut(|state| {
         // Waking a task the budget set aside re-queues it in the pool without asking for a
         // redraw; `needs_another_frame` is what gets it polled.
         let deferred = std::mem::take(&mut state.deferred);
-        if !deferred.is_empty() {
-            state.needs_another_frame = true;
-        }
+        let needs_another_frame = woke_after_stall || !deferred.is_empty();
         for waker in deferred {
             waker.wake();
         }
         FlushOutcome {
-            needs_another_frame: state.needs_another_frame,
+            needs_another_frame,
             budget_exhausted: state.budget_exhausted,
         }
     })
 }
+
+/// How many times one flush polls the pool before a wake it keeps seeing is left to the next
+/// frame.
+const MAX_ROUNDS: u32 = 3;
 
 /// Marks a flush as running for as long as it is alive, however it ends.
 struct Running;
@@ -132,7 +154,7 @@ pub(crate) fn note_wake() -> bool {
         .try_with(|state| {
             let mut state = state.borrow_mut();
             if state.running {
-                state.needs_another_frame = true;
+                state.woke = true;
             }
             state.running
         })

@@ -24,6 +24,7 @@ impl<C> CacheTree for LayoutTree<'_, C> {
     fn cache_get(&self, node: NodeId, input: &LayoutInput) -> Option<LayoutOutput> {
         let key = from_node_id(node);
         let state = self.state(key)?;
+        let input = &self.normalised(key, input);
         let mut output = match input.run_mode {
             RunMode::PerformLayout => state.full.get(input)?,
             RunMode::ComputeSize => {
@@ -40,7 +41,9 @@ impl<C> CacheTree for LayoutTree<'_, C> {
     }
 
     fn cache_store(&mut self, node: NodeId, input: &LayoutInput, output: LayoutOutput) {
-        let state = self.state_mut(from_node_id(node));
+        let key = from_node_id(node);
+        let input = &self.normalised(key, input);
+        let state = self.state_mut(key);
         match input.run_mode {
             RunMode::PerformLayout => state.full.store(input, output),
             RunMode::ComputeSize => {
@@ -55,5 +58,26 @@ impl<C> CacheTree for LayoutTree<'_, C> {
         self.store_mut()
             .state_mut(from_node_id(node))
             .forget_layout();
+    }
+}
+
+impl<C> LayoutTree<'_, C> {
+    /// The question `input` asks, with the parts of it the box cannot observe left out.
+    ///
+    /// The containing block's size is carried for percentages to resolve against. On an axis
+    /// where this box's style has none, the answer is the same whatever the number is, so the
+    /// number is dropped before the question is compared or stored. This is what keeps every
+    /// sibling of a row that grew on its cached answer: the flex column passes its new content
+    /// height to each of them, and none of them can tell.
+    fn normalised(&self, key: zgui_dom::side::BoxKey, input: &LayoutInput) -> LayoutInput {
+        let [width, height] = self.store.structure().lowered_style(key).parent_dependency;
+        let mut input = *input;
+        if !width {
+            input.parent_size.width = None;
+        }
+        if !height {
+            input.parent_size.height = None;
+        }
+        input
     }
 }

@@ -35,22 +35,34 @@ pub const STYLED: u32 = 1 << 2;
 /// the property that makes a stored flag safe.
 pub const ANIMATION_DIRTY_DESCENDANTS: u32 = 1 << 3;
 
+/// The custom property map this element inherits from moved since its style was built.
+///
+/// Raised on every child of an element whose inherited map changed, by the traversal step that
+/// changed it, and consumed by the child's own visit: the child either cascades again, because
+/// something it declares reads the map, or takes the new map into its existing style.
+pub const CUSTOM_MAP_CHANGED: u32 = 1 << 4;
+
 /// Every bit this word defines.
-pub const ALL: u32 = HAS_SNAPSHOT | SNAPSHOT_HANDLED | STYLED | ANIMATION_DIRTY_DESCENDANTS;
+pub const ALL: u32 =
+    HAS_SNAPSHOT | SNAPSHOT_HANDLED | STYLED | ANIMATION_DIRTY_DESCENDANTS | CUSTOM_MAP_CHANGED;
 
 #[cfg(test)]
 mod tests {
-    use super::{ALL, ANIMATION_DIRTY_DESCENDANTS, HAS_SNAPSHOT, SNAPSHOT_HANDLED, STYLED};
+    use super::{
+        ALL, ANIMATION_DIRTY_DESCENDANTS, CUSTOM_MAP_CHANGED, HAS_SNAPSHOT, SNAPSHOT_HANDLED,
+        STYLED,
+    };
 
     #[test]
-    fn the_four_bits_are_distinct_and_the_union_is_exactly_them() {
+    fn the_bits_are_distinct_and_the_union_is_exactly_them() {
         let bits = [
             HAS_SNAPSHOT,
             SNAPSHOT_HANDLED,
             STYLED,
             ANIMATION_DIRTY_DESCENDANTS,
+            CUSTOM_MAP_CHANGED,
         ];
         assert_eq!(bits.iter().fold(0, |all, bit| all | bit), ALL);
-        assert_eq!(ALL.count_ones(), 4);
+        assert_eq!(ALL.count_ones(), 5);
     }
 }

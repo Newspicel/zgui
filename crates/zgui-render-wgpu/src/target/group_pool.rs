@@ -145,12 +145,15 @@ impl GroupPool {
         let slot = self
             .reuse(scale, format)
             .or_else(|| self.allocate(gpu, scale, format))
-            .or_else(|| self.reuse(TargetScale::Half, format))
             .or_else(|| {
                 // The budget refused a full-resolution target, so isolation continues at half of
                 // it: the composite magnifies through a filtering sampler, which is the whole
-                // reason its bind-group layout carries one.
-                let degraded = self.allocate(gpu, TargetScale::Half, format);
+                // reason its bind-group layout carries one. Counted whether the half-resolution
+                // target is lent again or made, because what is counted is the frame drawn at
+                // the lower resolution.
+                let degraded = self
+                    .reuse(TargetScale::Half, format)
+                    .or_else(|| self.allocate(gpu, TargetScale::Half, format));
                 if degraded.is_some() && scale != TargetScale::Half {
                     self.degraded += 1;
                     tracing::debug!(

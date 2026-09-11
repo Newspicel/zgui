@@ -7,6 +7,7 @@
 //! to be reachable.
 
 use zgui_dom::{Document, NodeKey, NodeKind};
+use zgui_layout::scroll_region::ScrollOffsets;
 use zgui_layout::tree::store::LayoutStore;
 use zgui_scene::Placements;
 use zgui_vocab::Semantics;
@@ -32,6 +33,12 @@ pub struct World<'a> {
     pub scale: f32,
     /// Which node holds keyboard focus, if any does.
     pub focus: Option<NodeKey>,
+    /// Where each scroll container is scrolled to, when any is.
+    ///
+    /// A scroll container's children are measured from the origin its content would have
+    /// unscrolled, so that a scroll rewrites the container's node and none of the children's.
+    /// `None` reads as no container scrolled.
+    pub scroll: Option<&'a ScrollOffsets>,
 }
 
 impl World<'_> {
@@ -131,6 +138,7 @@ mod tests {
             placements: &placements,
             scale: 1.0,
             focus: None,
+            scroll: None,
         };
 
         let store = document.store();
@@ -173,6 +181,7 @@ mod tests {
             placements: &placements,
             scale: 1.0,
             focus: None,
+            scroll: None,
         };
         assert!(!world.is_projected(keys.0));
         assert!(

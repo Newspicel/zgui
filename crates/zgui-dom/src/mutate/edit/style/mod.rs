@@ -146,12 +146,10 @@ impl Edit<'_> {
         let Some(changed) = self.write_declaration(node, &property.to_declaration(), value) else {
             return false;
         };
-        if changed {
-            let (store, batch) = self.parts();
-            batch
-                .hints
-                .record(store, node, RestyleHint::RECASCADE_DESCENDANTS);
-        }
+        // Nothing below is told anything here. The element's own cascade rebuilds its map, and
+        // the traversal hands the new map down from there: a descendant that reads the property
+        // cascades again, one that does not takes the map into the style it has.
+        let _ = changed;
         true
     }
 

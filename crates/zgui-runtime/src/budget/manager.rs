@@ -232,7 +232,14 @@ pub fn enforce(
             let Some(limit) = cache.limit() else {
                 return;
             };
-            let over = cache.report().resident.saturating_sub(limit);
+            // What may go is the smaller of the excess and what is not pinned: a cache whose
+            // working set alone is over its limit has nothing to give back, and asking it every
+            // frame charges a full scan of that working set to a frame that changed one element.
+            let report = cache.report();
+            let over = report
+                .resident
+                .saturating_sub(limit)
+                .min(report.evictable());
             if over == 0 {
                 return;
             }
@@ -279,4 +286,108 @@ pub fn eviction_order(report: &BudgetReport) -> Vec<CacheId> {
         )
     });
     order.iter().map(|line| line.id).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    use super::{Budgeted, CacheRegistry, enforce};
+    use crate::budget::report::{CacheId, CacheLine, CacheReport, CacheUnit, rebuild};
+    use crate::budget::{BudgetReport, SceneEpoch};
+
+    /// A cache over its limit whose working set is `pinned` of its `resident` entries.
+    struct Held {
+        resident: u64,
+        pinned: u64,
+        asked: Rc<Cell<u64>>,
+    }
+
+    impl Held {
+        fn report(&self) -> CacheReport {
+            CacheReport {
+                resident: self.resident,
+                pinned: self.pinned,
+                last_used: SceneEpoch::FIRST,
+                rebuild_cost: rebuild::RECOMPUTED,
+                speculative: 0,
+                unit: CacheUnit::Entries,
+            }
+        }
+    }
+
+    impl Budgeted for Held {
+        fn id(&self) -> CacheId {
+            CacheId::ParagraphShaping
+        }
+        fn limit(&self) -> Option<u64> {
+            Some(100)
+        }
+        fn report(&self) -> CacheReport {
+            Held::report(self)
+        }
+        fn observe(&mut self, _epoch: SceneEpoch) {}
+        fn evict(&mut self, units: u64, _epoch: SceneEpoch) -> u64 {
+            self.asked.set(self.asked.get() + units);
+            0
+        }
+        fn forget(&mut self) {}
+    }
+
+    struct One(Held);
+
+    impl CacheRegistry for One {
+        fn for_each(&mut self, visit: &mut dyn FnMut(&mut dyn Budgeted)) {
+            visit(&mut self.0);
+        }
+    }
+
+    fn report_of(cache: &Held) -> BudgetReport {
+        BudgetReport::new(CacheId::ALL.map(|id| CacheLine {
+            id,
+            report: if id == CacheId::ParagraphShaping {
+                cache.report()
+            } else {
+                CacheReport {
+                    resident: 0,
+                    pinned: 0,
+                    last_used: SceneEpoch::FIRST,
+                    rebuild_cost: rebuild::RECOMPUTED,
+                    speculative: 0,
+                    unit: CacheUnit::Entries,
+                }
+            },
+            limit: Some(100),
+        }))
+    }
+
+    /// A working set alone over the limit is asked for nothing: the ask would be a scan of the
+    /// working set on every frame, for an eviction that can never take anything.
+    #[test]
+    fn a_cache_whose_working_set_is_over_its_limit_is_not_asked_to_evict() {
+        let asked = Rc::new(Cell::new(0));
+        let mut registry = One(Held {
+            resident: 1_000,
+            pinned: 1_000,
+            asked: Rc::clone(&asked),
+        });
+        let report = report_of(&registry.0);
+        enforce(&mut registry, &report, SceneEpoch::FIRST);
+        assert_eq!(asked.get(), 0);
+    }
+
+    /// The ask is bounded by what is not pinned, whatever the excess.
+    #[test]
+    fn the_ask_is_the_smaller_of_the_excess_and_the_evictable() {
+        let asked = Rc::new(Cell::new(0));
+        let mut registry = One(Held {
+            resident: 1_000,
+            pinned: 960,
+            asked: Rc::clone(&asked),
+        });
+        let report = report_of(&registry.0);
+        enforce(&mut registry, &report, SceneEpoch::FIRST);
+        assert_eq!(asked.get(), 40, "900 over the limit, 40 not pinned");
+    }
 }

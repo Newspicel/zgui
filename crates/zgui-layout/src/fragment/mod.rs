@@ -293,6 +293,13 @@ pub struct Fragment {
     /// A clip is not on that list: a clipping box's rectangle moves with the box, so the chain its
     /// descendants are drawn under is the same chain measured somewhere else.
     pub subtree_rigid: bool,
+    /// The range of hit-order keys this box's subtree spans, as `(first, last)`.
+    ///
+    /// Folded up by the fragment pass beside the ink, and read back where a fragment is born:
+    /// a newborn takes a key between the end of what is painted before it and the start of what
+    /// is painted after, and both ends are the neighbouring subtrees' ranges. A subtree with no
+    /// indexed fragment holds `(MAX, 0)`, which folds away.
+    pub subtree_order: (u64, u64),
 }
 
 impl Fragment {
@@ -322,6 +329,7 @@ impl Fragment {
             flags: FragmentFlags::EMPTY,
             subtree_disjoint: true,
             subtree_rigid: true,
+            subtree_order: (u64::MAX, 0),
         }
     }
 }

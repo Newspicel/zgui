@@ -60,10 +60,13 @@ pub(crate) struct Descent {
     /// Whether [`Descent::layout`] and [`Descent::rounded`] are what this box's descendants were
     /// last composed against.
     ///
-    /// False as soon as any box on the way down reports a layout result its standing fragments were
-    /// not composed from, because the rounded origin every descendant is snapped against is then a
-    /// different one and no descendant has merely moved.
-    pub(crate) layout_stable: bool,
+    /// False as soon as any box on the way down reports a layout *position* its standing fragments
+    /// were not composed from, because the rounded origin every descendant is snapped against is
+    /// then a different one and no descendant has merely moved. A box whose size moved while its
+    /// origin stood still leaves it true: the origin its descendants snap against is the same, and
+    /// where its size is felt below — a sticky descendant, a percentage — the pass finds out from
+    /// the descendant itself.
+    pub(crate) origin_stable: bool,
 }
 
 impl Descent {
@@ -81,7 +84,7 @@ impl Descent {
             scroll: None,
             scrollport: viewport,
             containing: viewport,
-            layout_stable: true,
+            origin_stable: true,
         }
     }
 }
@@ -173,7 +176,7 @@ pub(crate) fn place(
     let unrounded = state.unrounded;
     // Read before the walk overwrites it: what the descendants were snapped against is only the
     // same origin if this box's own result is the one they were composed from.
-    let layout_stable = from.layout_stable && state.composed == unrounded;
+    let origin_stable = from.origin_stable && state.composed.location == unrounded.location;
     let scale = tables.device.scale;
 
     let (snapped, edges) = snap::place(unrounded, from.layout, from.rounded);
@@ -374,7 +377,7 @@ pub(crate) fn place(
             scroll,
             scrollport,
             containing: content_box,
-            layout_stable,
+            origin_stable,
         },
     })
 }

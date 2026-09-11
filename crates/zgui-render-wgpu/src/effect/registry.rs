@@ -325,8 +325,8 @@ mod tests {
     #[test]
     fn a_field_renamed_on_one_side_alone_is_caught() {
         let source = "struct Params {\n    strength: f32,\n}\n";
-        let error = check_params(&program(4, &ONE, source))
-            .expect_err("a renamed field is a disagreement");
+        let error =
+            check_params(&program(4, &ONE, source)).expect_err("a renamed field is a disagreement");
         assert!(error.contains("amount"), "{error}");
     }
 

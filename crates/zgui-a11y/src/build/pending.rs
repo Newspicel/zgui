@@ -16,10 +16,12 @@ use std::collections::BTreeSet;
 use zgui_bits::Dirty;
 use zgui_dom::{Document, NodeKey};
 
-/// How many nodes may accumulate unbuilt before a whole tree is cheaper than a difference.
+/// How many nodes may owe a projection before a whole tree is cheaper than a difference.
 ///
 /// Reached only when nothing has been listening for a long time, which is the case where the
-/// difference would be discarded anyway.
+/// difference would be discarded anyway. Nodes that only moved are not counted: a rectangle
+/// replaced in a held node is cheaper than any projection, however many there are, and a whole
+/// tree would project every node that did not move as well.
 const BEFORE_A_FULL_REBUILD_IS_CHEAPER: usize = 4096;
 
 /// The nodes whose accessibility projection is owed, and whether that is now everything.
@@ -75,7 +77,7 @@ impl Pending {
         }
         self.moved.remove(&node);
         self.nodes.insert(node);
-        if self.owed_len() > BEFORE_A_FULL_REBUILD_IS_CHEAPER {
+        if self.nodes.len() > BEFORE_A_FULL_REBUILD_IS_CHEAPER {
             self.demand_everything();
         }
     }
@@ -89,9 +91,6 @@ impl Pending {
             return;
         }
         self.moved.insert(node);
-        if self.owed_len() > BEFORE_A_FULL_REBUILD_IS_CHEAPER {
-            self.demand_everything();
-        }
     }
 
     /// Records that the whole tree is owed.
@@ -104,11 +103,6 @@ impl Pending {
     /// Whether anything at all is owed.
     pub fn is_owed(&self) -> bool {
         self.everything || !self.nodes.is_empty() || !self.moved.is_empty()
-    }
-
-    /// How many nodes are named, of either kind.
-    fn owed_len(&self) -> usize {
-        self.nodes.len() + self.moved.len()
     }
 
     /// Whether what is owed is the whole tree.
@@ -171,6 +165,25 @@ mod tests {
                 .subtree()
                 .contains(Dirty::A11Y)
         );
+    }
+
+    /// A relayout that carries every row of a long list somewhere else owes a rectangle per row,
+    /// and a whole tree would project every node that did not move as well.
+    #[test]
+    fn any_number_of_moves_stays_a_list_of_moves() {
+        let mut pending = Pending::new();
+        let mut document = Document::new();
+        for _ in 0..5000 {
+            let node = document.append(
+                document.document_index(),
+                NodeKind::Element,
+                ElementName::new("row"),
+            );
+            pending.mark_moved(document.store().key_of(node));
+        }
+        assert!(!pending.is_everything());
+        assert_eq!(pending.moved().count(), 5000);
+        assert_eq!(pending.nodes().count(), 0);
     }
 
     #[test]

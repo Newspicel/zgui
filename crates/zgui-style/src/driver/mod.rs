@@ -9,6 +9,7 @@
 
 pub mod animations;
 pub mod context;
+mod recalc;
 pub mod snapshots;
 pub mod traversal;
 
@@ -157,7 +158,12 @@ pub(crate) fn run_pass(
         now,
         flags,
     );
-    let token = <RecalcStyle<'_> as DomTraversal<Node<'_>>>::pre_traverse(root, &context);
+    let from = if flags.for_animation_only() {
+        root
+    } else {
+        traversal_start(document, root)
+    };
+    let token = <RecalcStyle<'_> as DomTraversal<Node<'_>>>::pre_traverse(from, &context);
     if !token.should_traverse() {
         drop(context);
         return (Vec::new(), 0, false, start.elapsed());
@@ -173,6 +179,55 @@ pub(crate) fn run_pass(
     let (records, workers) = traverser.finish();
     drop(read);
     (records, workers, true, start.elapsed())
+}
+
+/// The element the traversal starts at: the deepest one that every obligation lies at or below.
+///
+/// The engine's own traversal starts at the root and, at every element it enters, asks each
+/// child whether it needs a visit — which is a probe of every row of a list for a class toggled
+/// on one cell of one of them. The document's dirty-child records already say which child that
+/// is, so the start descends while an element owes nothing itself, carries no snapshot and no
+/// hint of the engine's, and has exactly one child with style work under it. An element with a
+/// snapshot stops the descent above it, because the invalidation the snapshot runs can reach the
+/// element's later siblings, and those are only visited from their parent.
+fn traversal_start<'doc>(document: &'doc Document, root: Node<'doc>) -> Node<'doc> {
+    use style::dom::TElement;
+
+    let store = document.store();
+    let mut current = root;
+    loop {
+        let index = current.index();
+        let record = store.core(index);
+        let (own, _) = record.dirty().get();
+        if own.intersects(zgui_dom::stylo::flags::STYLE_WORK)
+            || current.has_snapshot()
+            || current
+                .borrow_data()
+                .is_none_or(|data| !data.has_styles() || !data.hint.is_empty())
+        {
+            return current;
+        }
+        let mut only = None;
+        for child in record.dirty_children().iter(store, index) {
+            let child_record = store.core(child);
+            let (child_own, child_subtree) = child_record.dirty().get();
+            if !(child_own | child_subtree).intersects(zgui_dom::stylo::flags::STYLE_WORK) {
+                continue;
+            }
+            if child_record.kind() != zgui_dom::NodeKind::Element || only.is_some() {
+                return current;
+            }
+            only = Some(child);
+        }
+        let Some(child) = only else {
+            return current;
+        };
+        let next = document.node(child);
+        if next.has_snapshot() {
+            return current;
+        }
+        current = next;
+    }
 }
 
 /// Whether anything at or below the root owes the style engine work.

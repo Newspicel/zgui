@@ -41,6 +41,28 @@ impl<'doc> Node<'doc> {
         self.record().clear_atomic(atomics::STYLED);
     }
 
+    /// Clears the style data of everything below this element, leaving its own alone.
+    ///
+    /// What an element restyled to `display: none` owes its subtree: nothing below it has a style
+    /// any more, and a style left behind would be read as one. Walked with a list rather than by
+    /// recursion, because a worker's stack is small. An element without data has no descendant
+    /// with data, which is the engine's own invariant and what bounds the walk.
+    pub fn clear_style_data_below(self) {
+        use style::dom::{TElement, TNode};
+        let mut parents: Vec<Node<'doc>> = vec![self];
+        while let Some(parent) = parents.pop() {
+            for kid in parent.traversal_children() {
+                if let Some(child) = kid.as_element()
+                    && child.is_styled()
+                {
+                    child.clear_style_data();
+                    parents.push(child);
+                }
+            }
+        }
+        self.clear_animation_work_below();
+    }
+
     /// This element's style data, for reading, or [`None`] if it has none.
     pub fn borrow_style_data(self) -> Option<ElementDataRef<'doc>> {
         self.is_styled().then(|| self.record().data().borrow())

@@ -99,7 +99,7 @@ fn a_property_this_build_does_not_have_is_refused_rather_than_dropped_silently()
 }
 
 #[test]
-fn a_custom_property_re_cascades_the_subtree_because_it_is_inherited() {
+fn a_custom_property_re_cascades_the_element_and_tells_nothing_below() {
     let (document, root) = one();
     document
         .edit(&EverythingMatters, |edit| {
@@ -111,7 +111,11 @@ fn a_custom_property_re_cascades_the_subtree_because_it_is_inherited() {
         })
         .expect("not poisoned");
     assert_eq!(declarations(&document, root), 1);
-    assert!(hint(&document, root).contains(RestyleHint::RECASCADE_DESCENDANTS));
+    assert!(hint(&document, root).contains(RestyleHint::RESTYLE_STYLE_ATTRIBUTE));
+    assert!(
+        !hint(&document, root).contains(RestyleHint::RECASCADE_DESCENDANTS),
+        "the traversal hands the new map down by name; a blanket recascade is what it replaces"
+    );
 }
 
 #[test]

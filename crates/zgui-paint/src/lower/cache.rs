@@ -71,12 +71,24 @@ impl PaintStyleRef {
 }
 
 /// The lowered styles a document has needed, and the two ways of finding one again.
+///
+/// # Why an identity entry holds its style
+///
+/// A key made of addresses is an identity only for as long as those addresses cannot be handed
+/// out twice. A style whose last reference is dropped frees its property groups, the allocator
+/// hands the same block to the next group the cascade builds, and a cache holding only the numbers
+/// answers the new style with the old style's lowering — a hovered row replayed without its
+/// highlight, with correct damage and nothing anywhere to report it. So each identity entry keeps
+/// a reference to the style it was made from, which pins the groups its key names for exactly as
+/// long as the entry lives, and [`sweep`](PaintStyleCache::sweep) is what lets them go.
 #[derive(Debug)]
 pub struct PaintStyleCache {
     /// The lowerings themselves, addressed by [`PaintStyleRef`].
     lowered: Vec<PaintStyle>,
     /// The identity lookup: the fast path.
-    by_identity: FxHashMap<LoweringKey, PaintStyleRef>,
+    by_identity: FxHashMap<LoweringKey, Identity>,
+    /// How many identity entries the last sweep left, which is what paces the next one.
+    swept_to: usize,
     /// The content lookup: the fallback that makes the bound per document rather than per worker.
     ///
     /// A hash narrows the search and equality settles it, because a hash collision that aliased two
@@ -88,6 +100,19 @@ pub struct PaintStyleCache {
     /// issued before an emptying cannot be mistaken for one issued after it.
     generation: u32,
 }
+
+/// One identity entry: the lowering, beside the style whose addresses the key is made of.
+#[derive(Debug)]
+struct Identity {
+    /// The lowering the key resolves to.
+    reference: PaintStyleRef,
+    /// Kept, never read: holding it is what stops the groups the key names from being freed and
+    /// their addresses reissued to a different style.
+    _style: ComputedStyle,
+}
+
+/// How many identity entries a cache holds before a sweep is worth its scan.
+const SWEEP_FLOOR: usize = 1024;
 
 impl Default for PaintStyleCache {
     fn default() -> Self {
@@ -101,6 +126,7 @@ impl PaintStyleCache {
         Self {
             lowered: Vec::new(),
             by_identity: FxHashMap::default(),
+            swept_to: 0,
             by_content: FxHashMap::default(),
             scale: 1.0,
             generation: 0,
@@ -141,6 +167,7 @@ impl PaintStyleCache {
     pub fn clear(&mut self) {
         self.lowered.clear();
         self.by_identity.clear();
+        self.swept_to = 0;
         self.by_content.clear();
         // Every reference handed out before now indexes a list that is about to stop existing, and
         // the indices are handed out again from zero. This is what stops one of them comparing equal
@@ -155,9 +182,9 @@ impl PaintStyleCache {
             self.scale = scale;
         }
         let key = LoweringKey::of(style);
-        if let Some(reference) = self.by_identity.get(&key) {
+        if let Some(identity) = self.by_identity.get(&key) {
             counter::bump(Counter::StylesLoweredFromCache);
-            return *reference;
+            return identity.reference;
         }
         let lowered = lower(style, scale);
         let hash = hash_of(&lowered, scale);
@@ -169,15 +196,47 @@ impl PaintStyleCache {
         });
         if let Some(reference) = existing {
             counter::bump(Counter::StylesLoweredFromCache);
-            self.by_identity.insert(key, reference);
+            self.remember(key, style, reference);
             return reference;
         }
         counter::bump(Counter::StylesLowered);
         let reference = PaintStyleRef::new(self.generation, self.lowered.len() as u32);
         self.by_content.entry(hash).or_default().push(reference);
         self.lowered.push(lowered);
-        self.by_identity.insert(key, reference);
+        self.remember(key, style, reference);
         reference
+    }
+
+    /// Files `reference` under `key`, holding `style` so the key stays an identity.
+    fn remember(&mut self, key: LoweringKey, style: &ComputedStyle, reference: PaintStyleRef) {
+        self.by_identity.insert(
+            key,
+            Identity {
+                reference,
+                _style: style.clone(),
+            },
+        );
+    }
+
+    /// Drops the identity entries whose style nothing else holds any more.
+    ///
+    /// A style only this cache still references belongs to an element that was restyled or
+    /// removed; its key can never be asked for again, and holding it keeps its groups from being
+    /// freed. The lowerings themselves stay — a record may name one by reference — and so does
+    /// the content lookup, which is what answers the next style with the same values.
+    ///
+    /// The scan reads every entry, so it runs only once the table has doubled since the last
+    /// sweep left it: each sweep is then paid for by at least as many insertions as it examines,
+    /// while what a churning document holds stays within a factor of two of what it uses.
+    pub fn sweep(&mut self) -> usize {
+        if self.by_identity.len() <= SWEEP_FLOOR.max(self.swept_to.saturating_mul(2)) {
+            return 0;
+        }
+        let before = self.by_identity.len();
+        self.by_identity
+            .retain(|_, identity| !identity._style.is_unique());
+        self.swept_to = self.by_identity.len();
+        before - self.swept_to
     }
 }
 
@@ -251,6 +310,7 @@ fn color(hash: ContentHash, color: zgui_color::Color) -> ContentHash {
 #[cfg(test)]
 mod tests {
     use zgui_css::StyleDraft;
+    use zgui_css::values::size::VisibilityValue;
 
     use super::PaintStyleCache;
     use crate::lower::key::LoweringKey;
@@ -264,6 +324,59 @@ mod tests {
             assert_eq!(cache.lower(&style, 1.0), first);
         }
         assert_eq!(cache.len(), 1);
+    }
+
+    /// The defect the pin exists for: a style dropped, its groups' addresses reissued to a
+    /// style with other values, and the cache answering the new one with the old one's lowering.
+    ///
+    /// The loop is what forces the reuse. Every hidden style it builds is a temporary, so its
+    /// groups are freed before the next is built, and an allocator that hands the same block back
+    /// is the common case. Each is lowered through a cache that has seen a *visible* style, and a
+    /// hit on a dead key would come back with `visible` set — a row drawn without the change that
+    /// restyled it, with correct damage and nothing to report.
+    #[test]
+    fn a_dead_key_is_never_answered_with_the_style_that_died() {
+        let mut cache = PaintStyleCache::new();
+        let seen = cache.lower(&StyleDraft::initial().build(), 1.0);
+        assert!(cache.get(seen).is_some_and(|style| style.visible));
+
+        for _ in 0..256 {
+            let mut draft = StyleDraft::initial();
+            draft.inherited_box().visibility = VisibilityValue::Hidden;
+            let hidden = draft.build();
+            let reference = cache.lower(&hidden, 1.0);
+            assert!(
+                cache.get(reference).is_some_and(|style| !style.visible),
+                "a hidden style was answered with a visible lowering: its key's addresses were \
+                 reissued from a style the cache stopped pinning"
+            );
+        }
+    }
+
+    /// The pin is released once nothing else holds the style, and not before.
+    #[test]
+    fn a_sweep_drops_only_the_entries_nothing_else_holds() {
+        let mut cache = PaintStyleCache::new();
+        let kept = StyleDraft::initial().build();
+        cache.lower(&kept, 1.0);
+        // Past the floor, with every style but `kept` dropped as soon as it is lowered.
+        for _ in 0..(super::SWEEP_FLOOR + 1) {
+            cache.lower(&StyleDraft::initial().build(), 1.0);
+        }
+        let identities = cache.by_identity.len();
+        assert!(identities > super::SWEEP_FLOOR);
+
+        let dropped = cache.sweep();
+        assert_eq!(
+            dropped,
+            identities - 1,
+            "every dead entry went and the live one stayed"
+        );
+        assert!(
+            cache.by_identity.contains_key(&LoweringKey::of(&kept)),
+            "the style something still holds keeps its entry"
+        );
+        assert_eq!(cache.len(), 1, "the lowerings themselves are not swept");
     }
 
     #[test]

@@ -230,7 +230,10 @@ fn a_sweep_keeps_every_parent_a_kept_entry_resolves_through() {
     assert_eq!(freed, 1);
     assert!(!table.contains(dead));
     assert!(table.contains(inner));
-    assert!(table.contains(outer), "what a kept entry resolves through stays");
+    assert!(
+        table.contains(outer),
+        "what a kept entry resolves through stays"
+    );
 }
 
 #[test]

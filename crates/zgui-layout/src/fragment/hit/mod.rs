@@ -22,7 +22,13 @@ pub use crate::fragment::hit::index::HitIndex;
 pub use crate::fragment::hit::pointer_events::PointerEvents;
 
 use zgui_geom::{Corners, Vec2};
-use zgui_scene::DrawOrder;
+
+/// Where an entry sits in painting order, as a key with room between neighbours.
+///
+/// Not the display list's own draw order: the index only has to sort its answers the way the
+/// document paints, and a key that leaves gaps lets a fragment born between two others take a key
+/// between theirs without the whole index being numbered again.
+pub type HitOrder = u64;
 
 use crate::fragment::FragKey;
 use crate::tree::store::LayoutStore;
@@ -34,7 +40,7 @@ use crate::tree::store::LayoutStore;
 pub fn entry_for(
     store: &LayoutStore,
     frag: FragKey,
-    order: DrawOrder,
+    order: HitOrder,
     scale: f32,
 ) -> Option<HitEntry> {
     let fragment = store.fragment(frag)?;

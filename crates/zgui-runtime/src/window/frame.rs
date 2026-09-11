@@ -997,7 +997,7 @@ impl Window {
     /// cascade has settled and before anything is laid out — because a paragraph cached from an
     /// earlier frame has to resolve to the new colour in the frame the cascade changed it, and
     /// re-shaping to achieve that is exactly what the indirection exists to avoid.
-    fn update_text_brushes(&mut self) {
+    pub(super) fn update_text_brushes(&mut self) {
         let updates = self.engine.text_paint_updates();
         if updates.is_empty() {
             return;

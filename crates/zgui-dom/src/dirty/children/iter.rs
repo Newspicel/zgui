@@ -1,9 +1,11 @@
 //! Reading the record back as the children it names.
 
+use smallvec::SmallVec;
+
 use crate::arena::store::DocumentStore;
 use crate::dirty::children::DirtyChildren;
 use crate::dirty::children::repr::{EXACT, Repr};
-use crate::id::node_key::{NodeIndex, OptIndex};
+use crate::id::node_key::NodeIndex;
 
 impl DirtyChildren {
     /// The children this record names, skipping any that `owner` no longer parents.
@@ -19,46 +21,33 @@ impl DirtyChildren {
         owner: NodeIndex,
     ) -> impl Iterator<Item = NodeIndex> + 'doc {
         let repr = self.0.get();
-        let mut exact = [OptIndex::NONE; EXACT];
-        let mut used = 0;
-        let mut span = None;
-        if repr.len == Repr::SPAN {
-            span = repr.slots[0].get();
-        } else {
-            exact = repr.slots;
-            used = repr.len as usize;
-        }
-        let stop = repr.slots[1].get();
-
-        let mut walked = 0;
-        core::iter::from_fn(move || {
-            if let Some(current) = span {
-                // A slot the arena has since recycled resolves to nothing. The walk cannot be
-                // continued through it, so it ends here; the entries beyond it are reached again
-                // by whatever re-marks them, and the record is rebuilt on the next unwind.
-                let Some(record) = store.try_core(current) else {
-                    span = None;
-                    return None;
-                };
-                span = if Some(current) == stop {
-                    None
-                } else {
-                    record.next_sibling()
-                };
-                return Some(current);
-            }
-            while walked < used {
-                let candidate = exact[walked].get();
-                walked += 1;
-                if let Some(candidate) = candidate {
-                    return Some(candidate);
+        let mut named: SmallVec<[NodeIndex; EXACT]> = SmallVec::new();
+        match repr.len {
+            Repr::WIDE => {
+                if let Some(set) = store.dirty_overflow().get(&owner) {
+                    named.extend(set.iter().copied());
                 }
             }
-            None
-        })
+            Repr::ALL => {
+                let mut next = store
+                    .try_core(owner)
+                    .and_then(|record| record.first_child());
+                while let Some(child) = next {
+                    named.push(child);
+                    next = store
+                        .try_core(child)
+                        .and_then(|record| record.next_sibling());
+                }
+            }
+            used => named.extend(
+                repr.slots[..used as usize]
+                    .iter()
+                    .filter_map(|slot| slot.get()),
+            ),
+        }
         // A child the arena has recycled resolves to nothing and is dropped here rather than
         // panicking a walk that was handed a record older than the frame it is reading.
-        .filter(move |child| {
+        named.into_iter().filter(move |child| {
             store
                 .try_core(*child)
                 .is_some_and(|record| record.parent() == Some(owner))

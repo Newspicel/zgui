@@ -71,10 +71,11 @@ thread_local! {
 /// from another thread is queued but nothing asks for the frame that would poll it — so an
 /// application that never calls this updates only when something else already caused a frame.
 ///
-/// Wakes raised *during* a flush are not forwarded; they are folded into
+/// Wakes raised *during* a flush are not forwarded: the flush polls what they woke before it
+/// returns, so an effect writing a signal costs nothing beyond the poll. A wake the flush could
+/// not service is folded into
 /// [`FlushOutcome::needs_another_frame`](crate::executor::FlushOutcome::needs_another_frame)
-/// instead, so an effect writing a signal costs one extra frame rather than a redraw request
-/// per write.
+/// instead, which is one frame rather than a redraw request per write.
 pub fn set_frame_waker(waker: Arc<dyn FrameWaker>) {
     TARGET.with(|target| target.set(waker));
 }

@@ -15,7 +15,8 @@ mod support;
 
 use std::sync::{Mutex, MutexGuard};
 
-use support::Harness;
+use support::{Harness, background, color};
+use zgui_interned::CustomPropertyName;
 use zgui_profile::{COUNTERS_ENABLED, Counter, counter};
 
 /// Held for the whole of any case that reads a counter.
@@ -205,4 +206,352 @@ fn a_class_toggle_asks_the_matcher_about_one_element_and_a_first_pass_asks_about
          document's {whole_document}: selector matching is being redone for rows nothing changed \
          about"
     );
+}
+
+/// A list of `rows` rows, each holding `cells` children, already through a frame.
+fn table(rows: usize, cells: usize) -> (Harness, Vec<zgui_dom::NodeIndex>) {
+    let mut harness = Harness::new();
+    let column = harness.append(harness.root, "column");
+    let mut nodes = Vec::new();
+    for _ in 0..rows {
+        let row = harness.append(column, "row");
+        for _ in 0..cells {
+            harness.append(row, "cell");
+        }
+        nodes.push(row);
+    }
+    harness.add_author("row { color: rgb(1, 2, 3) }");
+    harness.frame();
+    harness.retire_all();
+    (harness, nodes)
+}
+
+/// A change to a property nothing inherits cascades the element and nothing below it.
+///
+/// The engine's own rule hands every child a recascade whenever anything about the element
+/// changed, because its difference does not tell reset properties from inherited ones. A row's
+/// background is nobody else's business.
+#[test]
+fn a_reset_only_change_on_every_row_recascades_no_cell() {
+    let _guard = measuring();
+    let (mut harness, rows) = table(300, 6);
+
+    counter::reset();
+    harness.edit(|edit| {
+        for (index, &row) in rows.iter().enumerate() {
+            edit.set_style_property(
+                row,
+                "background-color",
+                Some(&format!("rgb({}, 0, 0)", index % 200)),
+            );
+        }
+    });
+    let pass = harness.frame();
+    let frame = counter::snapshot();
+
+    assert!(pass.styled >= rows.len());
+    if COUNTERS_ENABLED {
+        assert_eq!(
+            frame.elements_recascaded + frame.elements_restyled,
+            rows.len() as u64,
+            "a background moving on every row cascaded {} elements, so the cells were cascaded too",
+            frame.elements_recascaded + frame.elements_restyled
+        );
+    }
+}
+
+/// A change to an inherited property still reaches everything below the element.
+#[test]
+fn an_inherited_change_on_a_row_recascades_its_cells() {
+    let _guard = measuring();
+    let (mut harness, rows) = table(20, 6);
+
+    counter::reset();
+    harness.edit(|edit| {
+        edit.set_style_property(rows[3], "color", Some("rgb(200, 0, 0)"));
+    });
+    harness.frame();
+    let frame = counter::snapshot();
+
+    if COUNTERS_ENABLED {
+        assert_eq!(
+            frame.elements_recascaded + frame.elements_restyled,
+            7,
+            "the row and its six cells owe a cascade, and {} elements took one",
+            frame.elements_recascaded + frame.elements_restyled
+        );
+    }
+}
+
+/// A list of `rows` rows of `cells` cells under one author sheet, already through a frame.
+fn themed(rows: usize, cells: usize, css: &str) -> (Harness, Vec<zgui_dom::NodeIndex>) {
+    let mut harness = Harness::new();
+    let column = harness.append(harness.root, "column");
+    let mut nodes = Vec::new();
+    for _ in 0..rows {
+        let row = harness.append(column, "row");
+        for _ in 0..cells {
+            harness.append(row, "cell");
+        }
+        nodes.push(row);
+    }
+    harness.add_author(css);
+    harness.frame();
+    harness.retire_all();
+    (harness, nodes)
+}
+
+fn set_custom(harness: &mut Harness, node: zgui_dom::NodeIndex, name: &str, value: &str) {
+    harness.edit(|edit| {
+        assert!(edit.set_custom_property(node, CustomPropertyName::new(name), Some(value)));
+    });
+}
+
+fn first_cell(harness: &Harness, row: zgui_dom::NodeIndex) -> zgui_dom::NodeIndex {
+    harness
+        .document
+        .store()
+        .core(row)
+        .first_child()
+        .expect("the row has cells")
+}
+
+/// A custom property that changes cascades the elements whose declarations read it, and the
+/// elements between them and the change take the new map into the style they have.
+#[test]
+fn a_custom_property_change_recascades_its_readers_only() {
+    let _guard = measuring();
+    let (mut harness, rows) = themed(
+        500,
+        6,
+        "row { background-color: var(--accent, rgb(1, 1, 1)) }",
+    );
+
+    counter::reset();
+    let root = harness.root;
+    set_custom(&mut harness, root, "accent", "rgb(0, 9, 0)");
+    harness.frame();
+    let frame = counter::snapshot();
+
+    assert_eq!(background(&harness, rows[499]), (0, 9, 0));
+    if COUNTERS_ENABLED {
+        assert_eq!(
+            frame.elements_recascaded + frame.elements_restyled,
+            501,
+            "the root and five hundred reading rows owe a cascade, and {} elements took one",
+            frame.elements_recascaded + frame.elements_restyled
+        );
+        assert_eq!(
+            frame.custom_maps_refreshed, 3001,
+            "the column and every cell take the map without a cascade"
+        );
+    }
+}
+
+/// A custom property nothing reads cascades the element it was set on and nothing else.
+#[test]
+fn an_unread_custom_property_cascades_one_element() {
+    let _guard = measuring();
+    let (mut harness, _rows) = themed(500, 6, "row { color: var(--accent, rgb(1, 1, 1)) }");
+
+    counter::reset();
+    let root = harness.root;
+    set_custom(&mut harness, root, "spare", "1");
+    harness.frame();
+    let frame = counter::snapshot();
+
+    if COUNTERS_ENABLED {
+        assert_eq!(frame.elements_recascaded + frame.elements_restyled, 1);
+    }
+}
+
+/// An element that declares a custom property from another is a reader, and what it declares
+/// reaches its own readers.
+#[test]
+fn a_declarer_chain_reaches_the_readers_at_its_end() {
+    let _guard = measuring();
+    let (mut harness, rows) = themed(
+        100,
+        4,
+        "row { --tone: var(--accent, rgb(1, 1, 1)) } cell { color: var(--tone) }",
+    );
+
+    counter::reset();
+    let root = harness.root;
+    set_custom(&mut harness, root, "accent", "rgb(0, 0, 9)");
+    harness.frame();
+    let frame = counter::snapshot();
+
+    assert_eq!(color(&harness, first_cell(&harness, rows[50])), (0, 0, 9));
+    if COUNTERS_ENABLED {
+        assert_eq!(
+            frame.elements_recascaded + frame.elements_restyled,
+            1 + 100 + 400
+        );
+    }
+}
+
+/// An element that becomes a reader after the change cascades against the map as it is now.
+///
+/// Its parent took the map without a cascade, so the trap would be a cascade that reads the map
+/// the parent's style was built against a frame ago.
+#[test]
+fn a_late_reader_cascades_against_the_current_map() {
+    let _guard = measuring();
+    let (mut harness, rows) = themed(
+        50,
+        4,
+        "cell.reader { color: var(--accent, rgb(1, 1, 1)) } row.hi { background: rgb(7, 7, 7) }",
+    );
+    let cell = first_cell(&harness, rows[20]);
+
+    counter::reset();
+    let root = harness.root;
+    set_custom(&mut harness, root, "accent", "rgb(9, 0, 0)");
+    harness.frame();
+    let frame = counter::snapshot();
+    if COUNTERS_ENABLED {
+        assert_eq!(frame.elements_recascaded + frame.elements_restyled, 1);
+    }
+
+    counter::reset();
+    harness.set_classes(cell, &["reader"]);
+    let pass = harness.frame();
+    assert!(
+        pass.traversed,
+        "the class toggle owes a restyle whatever the last frame refreshed"
+    );
+    assert_eq!(color(&harness, cell), (9, 0, 0));
+
+    counter::reset();
+    harness.set_classes(rows[20], &["hi"]);
+    harness.frame();
+    let frame = counter::snapshot();
+    assert_eq!(color(&harness, cell), (9, 0, 0));
+    if COUNTERS_ENABLED {
+        assert_eq!(
+            frame.elements_recascaded + frame.elements_restyled,
+            1,
+            "a background on the row is nobody else's business"
+        );
+    }
+}
+
+/// A name the framework reads on an element's behalf counts every descendant as a reader.
+#[test]
+fn a_framework_read_name_recascades_everything_below() {
+    let _guard = measuring();
+    let (mut harness, _rows) = themed(50, 4, "row { color: rgb(1, 1, 1) }");
+
+    counter::reset();
+    let root = harness.root;
+    set_custom(&mut harness, root, "zgui-fill", "rgb(9, 0, 0)");
+    harness.frame();
+    let frame = counter::snapshot();
+
+    if COUNTERS_ENABLED {
+        assert_eq!(
+            frame.elements_recascaded + frame.elements_restyled,
+            1 + 1 + 50 + 200
+        );
+        assert_eq!(frame.custom_maps_refreshed, 0);
+    }
+}
+
+/// An element that declares an effect reads that effect's parameters by name, so any custom
+/// property change reaches it as a cascade.
+#[test]
+fn an_effect_holder_recascades_on_any_custom_property_change() {
+    let _guard = measuring();
+    let (mut harness, rows) = themed(50, 4, "row.lit { --zgui-shader: glow }");
+    harness.set_classes(rows[10], &["lit"]);
+    harness.frame();
+    harness.retire_all();
+
+    counter::reset();
+    let root = harness.root;
+    set_custom(&mut harness, root, "glow-reach", "12");
+    harness.frame();
+    let frame = counter::snapshot();
+
+    if COUNTERS_ENABLED {
+        // The effect's name is a custom property, so the row's four cells inherit it and hold
+        // the effect as much as the row does.
+        assert_eq!(
+            frame.elements_recascaded + frame.elements_restyled,
+            1 + 1 + 4,
+            "the root, the row holding the effect and the cells that inherit it"
+        );
+    }
+}
+
+/// A class toggled on one cell of a wide list starts the traversal at that cell.
+#[test]
+fn a_class_toggle_deep_in_a_wide_list_traverses_the_cell_and_nothing_above_it() {
+    let _guard = measuring();
+    let (mut harness, rows) = themed(500, 6, "cell.lit { color: rgb(9, 0, 0) }");
+    let cell = first_cell(&harness, rows[250]);
+
+    counter::reset();
+    harness.set_classes(cell, &["lit"]);
+    harness.frame();
+    let frame = counter::snapshot();
+
+    assert_eq!(color(&harness, cell), (9, 0, 0));
+    if COUNTERS_ENABLED {
+        assert_eq!(frame.elements_restyled, 1);
+        assert!(
+            frame.elements_traversed <= 2,
+            "the traversal entered {} elements for one cell's class",
+            frame.elements_traversed
+        );
+    }
+}
+
+/// A sibling combinator still fires when its subject's earlier sibling changes deep in the tree.
+#[test]
+fn a_sibling_rule_fires_when_the_traversal_starts_below_the_root() {
+    let _guard = measuring();
+    let (mut harness, rows) = themed(200, 4, "cell.a + cell { color: rgb(0, 9, 0) }");
+    let first = first_cell(&harness, rows[100]);
+    let second = harness
+        .document
+        .store()
+        .core(first)
+        .next_sibling()
+        .expect("the row has a second cell");
+
+    harness.set_classes(first, &["a"]);
+    harness.frame();
+    assert_eq!(color(&harness, second), (0, 9, 0));
+
+    harness.set_classes(first, &[]);
+    harness.frame();
+    assert_ne!(color(&harness, second), (0, 9, 0));
+}
+
+/// Two mutations far apart keep the traversal above both of them, and both are styled.
+#[test]
+fn two_distant_mutations_are_both_styled() {
+    let _guard = measuring();
+    let (mut harness, rows) = themed(500, 6, "cell.lit { color: rgb(9, 0, 0) }");
+    let near = first_cell(&harness, rows[10]);
+    let far = first_cell(&harness, rows[490]);
+
+    counter::reset();
+    harness.set_classes(near, &["lit"]);
+    harness.set_classes(far, &["lit"]);
+    let pass = harness.frame();
+    let frame = counter::snapshot();
+
+    assert_eq!(color(&harness, near), (9, 0, 0));
+    assert_eq!(color(&harness, far), (9, 0, 0));
+    assert_eq!(pass.matched, 2);
+    if COUNTERS_ENABLED {
+        assert!(
+            frame.elements_traversed <= 2 + 2 + 500 + 2,
+            "the traversal entered {} elements for two cells' classes",
+            frame.elements_traversed
+        );
+    }
 }

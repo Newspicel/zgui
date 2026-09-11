@@ -18,8 +18,18 @@
 //! and the accumulated damage is cleared on a schedule that depends on which traversal flags were
 //! set. Both are read while the worker owns the element, which is correct under every combination.
 
-use std::sync::Mutex;
+use std::hash::{Hash, Hasher};
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{Arc, Mutex};
+
+use rustc_hash::{FxHashMap, FxHasher};
+use style::data::ElementData;
+use style::dom::TElement;
+use style::rule_tree::StrongRuleNode;
+use style::traversal_flags::TraversalFlags;
+
+use crate::deps::var_refs::RuleRefs;
+use crate::driver::recalc::ChangedNames;
 
 use style::Atom;
 use style::context::{
@@ -28,7 +38,7 @@ use style::context::{
 use style::data::RestyleKind;
 use style::dom::TNode;
 use style::selector_parser::{PseudoElement, RestyleDamage};
-use style::traversal::{DomTraversal, PerLevelTraversalData, recalc_style_at};
+use style::traversal::{DomTraversal, PerLevelTraversalData};
 use zgui_css::MAX_STYLE_THREADS;
 use zgui_dom::{Node, NodeIndex, NodeKey};
 
@@ -113,6 +123,19 @@ pub(crate) struct RecalcStyle<'a> {
     /// Evidence rather than trust: the traversal stays on one thread until a level is wide enough
     /// to be worth splitting, so "a pool was handed to it" is not "it used one".
     workers: AtomicU32,
+    /// Which custom properties each visited element's inherited map changed by, for its children.
+    pub(super) custom_changes: Mutex<FxHashMap<NodeIndex, Arc<ChangedNames>>>,
+    /// What each rule chain reads and declares, by a hash of the declaration blocks it names.
+    ///
+    /// The node is held beside the answer so the blocks it names stay allocated while the answer
+    /// is filed under their addresses. Lives for one traversal: a chain is shared by every element
+    /// that matched the same rules, which is what makes the scan cheap.
+    pub(super) refs: Mutex<FxHashMap<u64, (StrongRuleNode, Arc<RuleRefs>)>>,
+    /// The custom properties whose presence makes an element read custom properties by any name.
+    ///
+    /// A shader or filter takes its parameters from custom properties named after itself, so an
+    /// element that declares one reads names no declaration of its own mentions.
+    pub(super) wildcard_names: [style::custom_properties::Name; 4],
 }
 
 impl<'a> RecalcStyle<'a> {
@@ -122,7 +145,47 @@ impl<'a> RecalcStyle<'a> {
             context,
             restyled: PerWorker::new(),
             workers: AtomicU32::new(0),
+            custom_changes: Mutex::new(FxHashMap::default()),
+            refs: Mutex::new(FxHashMap::default()),
+            wildcard_names: zgui_css::values::custom::WILDCARD_DECLARERS
+                .map(style::custom_properties::Name::from),
         }
+    }
+
+    /// The custom properties the element at `parent` changed for its children, if it did.
+    pub(super) fn changed_names_of(&self, parent: NodeIndex) -> Option<Arc<ChangedNames>> {
+        self.custom_changes
+            .lock()
+            .unwrap_or_else(|held| held.into_inner())
+            .get(&parent)
+            .cloned()
+    }
+
+    /// Records what the element at `node` changed for its children.
+    pub(super) fn note_changed_names(&self, node: NodeIndex, names: Arc<ChangedNames>) {
+        self.custom_changes
+            .lock()
+            .unwrap_or_else(|held| held.into_inner())
+            .insert(node, names);
+    }
+
+    /// What the rule chain ending at `rules` reads and declares, computed once per chain.
+    pub(super) fn refs_of(&self, rules: &StrongRuleNode) -> Arc<RuleRefs> {
+        let mut hasher = FxHasher::default();
+        for node in rules.self_and_ancestors() {
+            let address = node
+                .style_source()
+                .map_or(0, |source| source.get().heap_ptr() as usize);
+            address.hash(&mut hasher);
+        }
+        let key = hasher.finish();
+        let mut cache = self.refs.lock().unwrap_or_else(|held| held.into_inner());
+        if let Some((_, refs)) = cache.get(&key) {
+            return Arc::clone(refs);
+        }
+        let refs = Arc::new(crate::deps::var_refs::refs_of(rules, &self.context.guards));
+        cache.insert(key, (rules.clone(), Arc::clone(&refs)));
+        refs
     }
 
     /// What the traversal styled, and how many distinct workers ran.
@@ -155,7 +218,7 @@ impl<'doc> DomTraversal<Node<'doc>> for RecalcStyle<'_> {
             Some(RestyleKind::MatchAndCascade)
         );
 
-        recalc_style_at(
+        super::recalc::recalc_style_at(
             self,
             traversal_data,
             context,
@@ -197,6 +260,33 @@ impl<'doc> DomTraversal<Node<'doc>> for RecalcStyle<'_> {
         // "is there work below me" is a view of the invalidation word, and that word is retired
         // exactly once per frame by the walk that also retires the obligations it summarises.
         // Clearing it on a second schedule is how a mark taken between the two is silently lost.
+    }
+
+    /// The engine's own answer, plus one of this document's: an element whose inherited custom
+    /// property map moved is visited whatever its hint says, so it can take the map or cascade.
+    fn element_needs_traversal(
+        el: Node<'doc>,
+        traversal_flags: TraversalFlags,
+        data: Option<&ElementData>,
+    ) -> bool {
+        if !traversal_flags.for_animation_only() && el.has_custom_map_changed() {
+            return true;
+        }
+        let data = match data {
+            Some(d) if d.has_styles() => d,
+            _ => return true,
+        };
+        if traversal_flags.for_animation_only() {
+            return el.has_animation_only_dirty_descendants()
+                || data.hint.has_animation_hint_or_recascade();
+        }
+        if el.has_dirty_descendants() {
+            return true;
+        }
+        if !data.hint.is_empty() {
+            return true;
+        }
+        !data.damage.is_empty()
     }
 
     /// The post-order pass exists to build the engine's own flow tree, which is not the tree this

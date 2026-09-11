@@ -1,5 +1,6 @@
 //! A surface that is a buffer, with no window behind it.
 
+use std::collections::VecDeque;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 
@@ -8,6 +9,41 @@ use zgui_geom::{Css, CssPx, Device, DevicePx, Size};
 use zgui_platform::{
     CursorStyle, Decorations, FullscreenMode, Surface, SurfaceAttributes, SurfaceId, TextInput,
 };
+
+/// How many accessibility nodes the surface keeps across the updates it retains.
+///
+/// A bound on nodes rather than on updates, because the two kinds of driver differ in exactly
+/// that: a test publishes hundreds of small updates and replays them from the first, which a
+/// bound on their number would cut short; a benchmark over a long list publishes an update of
+/// tens of thousands of nodes per frame, which is what must not be held for thousands of frames.
+/// Once the bound is passed the oldest updates go first, and a driver that wants the whole
+/// sequence drains it as it goes.
+pub const A11Y_LOG_NODES: usize = 1 << 20;
+
+/// The retained accessibility updates and how many nodes they hold between them.
+#[derive(Debug, Default)]
+struct A11yLog {
+    /// The updates, oldest first.
+    updates: VecDeque<TreeUpdate>,
+    /// How many nodes `updates` carry in total.
+    nodes: usize,
+}
+
+impl A11yLog {
+    /// Keeps `update`, letting the oldest updates go once the bound is passed.
+    ///
+    /// The one just pushed is never let go: a log holding the latest update is what
+    /// [`last_a11y_update`](OffscreenSurface::last_a11y_update) answers from.
+    fn push(&mut self, update: TreeUpdate) {
+        self.nodes += update.nodes.len();
+        self.updates.push_back(update);
+        while self.nodes > A11Y_LOG_NODES && self.updates.len() > 1 {
+            if let Some(oldest) = self.updates.pop_front() {
+                self.nodes -= oldest.nodes.len();
+            }
+        }
+    }
+}
 
 /// A surface that is a buffer, with no window behind it.
 ///
@@ -39,15 +75,20 @@ pub struct OffscreenSurface {
     requested: AtomicU64,
     /// How many accessibility updates have been published.
     a11y_updates: AtomicU64,
-    /// Every accessibility update published, in order, kept so a test can read what a screen
-    /// reader would have been told.
+    /// The most recent accessibility updates published, in order, kept so a test can read what a
+    /// screen reader would have been told.
     ///
     /// A count alone cannot tell an update that carried the right tree from one that carried an
-    /// empty one, and the tree is the whole point of the channel. The whole sequence is kept and
-    /// not only the last, because an update is a *difference*: what it names is resolved against
-    /// everything sent before it, so a check on one update alone would reject every correct
-    /// incremental one.
-    a11y_log: Mutex<Vec<TreeUpdate>>,
+    /// empty one, and the tree is the whole point of the channel. A sequence is kept and not only
+    /// the last, because an update is a *difference*: what it names is resolved against everything
+    /// sent before it, so a check on one update alone would reject every correct incremental one.
+    ///
+    /// The sequence is bounded at [`A11Y_LOG_NODES`] nodes over all retained updates. A headless
+    /// surface always has a listener, so a whole tree is published for every frame that owes one,
+    /// and a driver that runs for thousands of frames would otherwise retain every tree it was
+    /// ever sent. A driver that wants the whole sequence drains it as it goes, through
+    /// [`take_a11y_log`](OffscreenSurface::take_a11y_log).
+    a11y_log: Mutex<A11yLog>,
     /// Everything the surface was told about text input, in order.
     ///
     /// Whether an input method is wanted at all, and where its candidate window goes, is a state
@@ -85,7 +126,7 @@ impl OffscreenSurface {
             pending: AtomicU64::new(0),
             requested: AtomicU64::new(0),
             a11y_updates: AtomicU64::new(0),
-            a11y_log: Mutex::new(Vec::new()),
+            a11y_log: Mutex::new(A11yLog::default()),
             text_input_log: Mutex::new(Vec::new()),
             cursor_log: Mutex::new(Vec::new()),
             visible: AtomicBool::new(false),
@@ -138,11 +179,13 @@ impl OffscreenSurface {
         self.a11y_log
             .lock()
             .expect("the log is not poisoned")
-            .last()
+            .updates
+            .back()
             .cloned()
     }
 
-    /// Every accessibility update published, in the order they were published.
+    /// The accessibility updates published, in the order they were published, back to the bound
+    /// of [`A11Y_LOG_NODES`].
     ///
     /// This is what a consumer holds: each update is applied over the ones before it, so a
     /// question about what the consumer can resolve is a question about the whole sequence.
@@ -150,7 +193,21 @@ impl OffscreenSurface {
         self.a11y_log
             .lock()
             .expect("the log is not poisoned")
-            .clone()
+            .updates
+            .iter()
+            .cloned()
+            .collect()
+    }
+
+    /// Takes every accessibility update published since the last take, in order.
+    ///
+    /// For a driver that folds the updates as they arrive: the log is emptied, so nothing is
+    /// cloned twice and nothing is retained past its reading. The count from
+    /// [`a11y_updates`](OffscreenSurface::a11y_updates) is untouched.
+    pub fn take_a11y_log(&self) -> Vec<TreeUpdate> {
+        let mut log = self.a11y_log.lock().expect("the log is not poisoned");
+        log.nodes = 0;
+        log.updates.drain(..).collect()
     }
 
     /// Everything the surface was told about text input, in the order it was told.
@@ -301,10 +358,9 @@ impl Surface for OffscreenSurface {
         // What it was told is kept rather than discarded: an assertion about the tree is the only
         // one that can tell a channel that carries the document from one that carries nothing.
         let update = build();
-        self.a11y_log
-            .lock()
-            .expect("the log is not poisoned")
-            .push(update);
+        let mut log = self.a11y_log.lock().expect("the log is not poisoned");
+        log.push(update);
+        drop(log);
         self.a11y_updates.fetch_add(1, Ordering::Relaxed);
     }
 }
@@ -321,6 +377,64 @@ mod tests {
             SurfaceId::new(1),
             Size::new(DevicePx(400.0), DevicePx(400.0)),
         )
+    }
+
+    /// An update carrying `nodes` nodes, which is what a frame that moved that many publishes.
+    fn update_of(nodes: usize) -> accesskit::TreeUpdate {
+        accesskit::TreeUpdate {
+            nodes: (0..nodes)
+                .map(|n| {
+                    (
+                        accesskit::NodeId(n as u64),
+                        accesskit::Node::new(accesskit::Role::Unknown),
+                    )
+                })
+                .collect(),
+            tree: None,
+            tree_id: accesskit::TreeId::ROOT,
+            focus: accesskit::NodeId(0),
+        }
+    }
+
+    #[test]
+    fn the_accessibility_log_keeps_every_small_update_and_counts_them_all() {
+        let surface = surface();
+        for _ in 0..1_000 {
+            surface.push_a11y_update(&mut || update_of(3));
+        }
+        assert_eq!(surface.a11y_updates(), 1_000);
+        assert_eq!(
+            surface.a11y_log().len(),
+            1_000,
+            "a test replays the sequence from its first update, so small updates are all kept"
+        );
+        assert_eq!(surface.take_a11y_log().len(), 1_000);
+        assert!(surface.a11y_log().is_empty(), "taking the log empties it");
+        assert_eq!(
+            surface.a11y_updates(),
+            1_000,
+            "the count is what was published, whatever was taken"
+        );
+    }
+
+    #[test]
+    fn the_accessibility_log_lets_the_oldest_large_updates_go() {
+        let surface = surface();
+        let each = super::A11Y_LOG_NODES / 4;
+        for _ in 0..40 {
+            surface.push_a11y_update(&mut || update_of(each));
+        }
+        let kept = surface.a11y_log();
+        assert_eq!(
+            kept.len(),
+            4,
+            "a driver that runs for thousands of frames must not hold a tree per frame"
+        );
+        assert_eq!(surface.a11y_updates(), 40);
+        assert_eq!(
+            surface.last_a11y_update().map(|update| update.nodes.len()),
+            Some(each)
+        );
     }
 
     #[test]

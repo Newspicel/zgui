@@ -63,6 +63,7 @@
 //!     placements: &placements,
 //!     scale: 1.0,
 //!     focus: None,
+//!     scroll: None,
 //! };
 //!
 //! let mut builder = A11yBuilder::new();

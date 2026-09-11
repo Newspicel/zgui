@@ -41,6 +41,7 @@ macro_rules! world {
             placements: &zgui_scene::Placements::EMPTY,
             scale: 1.0,
             focus: None,
+            scroll: None,
         }
     };
 }
@@ -286,6 +287,7 @@ fn focus_is_reported_on_every_update_and_never_dangles() {
         placements: &zgui_scene::Placements::EMPTY,
         scale: 1.0,
         focus: Some(focused),
+        scroll: None,
     };
     let update = builder.build(&world);
     assert_eq!(update.focus, to_a11y(focused));
@@ -298,6 +300,7 @@ fn focus_is_reported_on_every_update_and_never_dangles() {
         placements: &zgui_scene::Placements::EMPTY,
         scale: 1.0,
         focus: zgui_dom::NodeKey::from_u64(0xdead_beef),
+        scroll: None,
     };
     let update = builder.focus_update(&stale);
     assert_eq!(

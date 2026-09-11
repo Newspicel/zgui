@@ -9,6 +9,19 @@ use style::custom_properties::Name;
 
 use crate::computed::style::ComputedStyle;
 
+/// The custom properties whose presence makes an element read custom properties by any name.
+///
+/// A shader or filter takes its parameters from custom properties named after the effect, so an
+/// element that declares one of these reads names no declaration of its own mentions. The names
+/// mirror `zgui_scene::property`, which this crate sits below; the scene crate's tests hold the
+/// two lists equal.
+pub const WILDCARD_DECLARERS: [&str; 4] = [
+    "zgui-shader",
+    "zgui-shape",
+    "zgui-filter",
+    "zgui-backdrop-filter",
+];
+
 /// The computed text of the custom property `name` on `style`, without its `--` prefix.
 ///
 /// Looks in the inherited map first and the non-inherited one after, which is the order a lookup
@@ -17,14 +30,39 @@ use crate::computed::style::ComputedStyle;
 ///
 /// `None` means nothing declared it anywhere up the tree.
 pub fn text<'a>(style: &'a ComputedStyle, name: &str) -> Option<&'a str> {
-    let name = Name::from(name);
-    let properties = style.custom_properties();
-    properties
-        .inherited
-        .get(&name)
-        .or_else(|| properties.non_inherited.get(&name))
-        .and_then(|value| value.as_universal())
-        .map(|value| value.css.as_str())
+    with_name(name, |name| {
+        let properties = style.custom_properties();
+        properties
+            .inherited
+            .get(name)
+            .or_else(|| properties.non_inherited.get(name))
+            .and_then(|value| value.as_universal())
+            .map(|value| value.css.as_str())
+    })
+}
+
+/// Runs `body` with `name` as the engine's interned name for it.
+///
+/// Interning a name the engine has not seen is a write to a process-wide set, and dropping the
+/// handle is another; the framework reads the same few names on every lowering, so the handles
+/// are kept per thread and interned once each.
+fn with_name<R>(name: &str, body: impl FnOnce(&Name) -> R) -> R {
+    use std::cell::RefCell;
+    use std::collections::HashMap;
+
+    thread_local! {
+        static NAMES: RefCell<std::collections::HashMap<String, Name>> = RefCell::new(HashMap::new());
+    }
+    NAMES.with(|names| {
+        let mut names = names.borrow_mut();
+        if let Some(interned) = names.get(name) {
+            return body(interned);
+        }
+        let interned = Name::from(name);
+        let result = body(&interned);
+        names.insert(name.to_owned(), interned);
+        result
+    })
 }
 
 /// The custom property `name` on `style`, read as a colour.

@@ -52,6 +52,12 @@ struct Ring {
 /// Whether anything is being kept, read on every mark.
 static KEEPING: AtomicBool = AtomicBool::new(false);
 
+/// Whether the notes are wanted along with the marks.
+///
+/// A note is built by the caller and costs an allocation per mark; a reader that wants only the
+/// shape of the frame asks for the marks alone and every note is skipped before it is formatted.
+static NOTES: AtomicBool = AtomicBool::new(true);
+
 /// The ring itself.
 static RING: OnceLock<Ring> = OnceLock::new();
 
@@ -61,6 +67,34 @@ static RING: OnceLock<Ring> = OnceLock::new();
 /// resized would have to reallocate under a lock every mark takes, and the point of the bound is
 /// that the cost of recording does not depend on how long the process has been running.
 pub fn retain(capacity: usize) {
+    NOTES.store(true, Ordering::Relaxed);
+    keep(capacity);
+}
+
+/// Starts keeping the last `capacity` marks in memory with their notes left empty, or stops when
+/// `capacity` is zero.
+///
+/// For a reader that wants where the time went and not what each stage had to say: the frame
+/// formats its notes only when something asks for them, so a ring kept this way costs the
+/// recording thread no allocation per mark. A file sink, if one is enabled, still gets the notes.
+///
+/// ```
+/// zgui_profile::latency::retain_marks(64);
+/// zgui_profile::latency::note_with("f.end", || "presented".to_owned());
+///
+/// let recent = zgui_profile::latency::recent();
+/// assert_eq!(recent.len(), 1);
+/// assert_eq!(recent[0].stage, "f.end");
+/// assert!(recent[0].note.is_empty());
+/// # zgui_profile::latency::retain(0);
+/// ```
+pub fn retain_marks(capacity: usize) {
+    NOTES.store(false, Ordering::Relaxed);
+    keep(capacity);
+}
+
+/// Turns keeping on at `capacity`, or off at zero.
+fn keep(capacity: usize) {
     if capacity == 0 {
         KEEPING.store(false, Ordering::Relaxed);
         return;
@@ -76,6 +110,11 @@ pub fn retain(capacity: usize) {
 /// Whether marks are being kept in memory.
 pub fn retaining() -> bool {
     KEEPING.load(Ordering::Relaxed)
+}
+
+/// Whether the ring wants the notes as well as the marks.
+pub(super) fn wants_notes() -> bool {
+    !KEEPING.load(Ordering::Relaxed) || NOTES.load(Ordering::Relaxed)
 }
 
 /// Every mark still in the ring, oldest first.

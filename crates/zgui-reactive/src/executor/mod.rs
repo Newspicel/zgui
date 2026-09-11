@@ -194,7 +194,7 @@ mod tests {
     }
 
     #[test]
-    fn a_write_during_the_flush_is_folded_into_one_more_frame() {
+    fn a_write_during_the_flush_is_settled_by_that_flush() {
         let (owner, waker) = runtime();
         let source = RwSignal::new(0);
         let middle = RwSignal::new(0);
@@ -213,8 +213,9 @@ mod tests {
         let _zone = crate::zone::enter_non_reactive_zone();
         assert_eq!(sink.get(), 7, "the chain settled inside one flush");
         assert!(
-            outcome.needs_another_frame,
-            "a wake was raised during the frame"
+            !outcome.needs_another_frame,
+            "the wake was serviced by the flush that saw it, so no frame is owed for it: a frame \
+             asked for here runs the whole pipeline and finds nothing to draw"
         );
         assert_eq!(waker.take(), 0, "and asked for no redraw from inside it");
 

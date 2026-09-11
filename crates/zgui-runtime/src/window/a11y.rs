@@ -68,12 +68,14 @@ impl Window {
         let document = self.document.borrow();
         let layout = self.layout.borrow();
         let placements = self.host.placements();
+        let scroll = self.scroll.borrow();
         let world = World {
             document: &document,
             layout: &layout,
             placements: &placements,
             scale: self.scale,
             focus: self.router.interaction().focus.focused(),
+            scroll: Some(scroll.composed()),
         };
         let builder = &mut self.a11y;
         self.surface.push_a11y_update(&mut || {
@@ -107,6 +109,7 @@ impl Window {
             placements: &placements,
             scale: self.scale,
             focus: self.router.interaction().focus.focused(),
+            scroll: None,
         };
         let builder = &self.a11y;
         self.surface

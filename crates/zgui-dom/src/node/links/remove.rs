@@ -25,11 +25,6 @@ pub(crate) fn unlink(store: &DocumentStore, child: NodeIndex) -> Option<NodeInde
 
     let previous = record.prev_sibling.get();
     let next = record.next_sibling.get();
-    // Before the links go: a dirty-child run ending at this node has to re-anchor onto a sibling
-    // that is still here, or it names a child list it no longer describes.
-    parent_record
-        .dirty_children()
-        .note_unlinked(child, previous.get(), next.get());
     match previous.get() {
         Some(previous) => store.core(previous).next_sibling.set(next),
         None => parent_record.first_child.set(next),

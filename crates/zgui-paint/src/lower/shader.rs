@@ -155,3 +155,21 @@ fn parameters(style: &ComputedStyle, name: &str) -> SmallVec<[(String, f32); 4]>
     }
     found
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn the_wildcard_declarers_are_the_scene_effect_properties() {
+        use zgui_scene::property;
+        let mut names = zgui_css::values::custom::WILDCARD_DECLARERS.to_vec();
+        names.sort_unstable();
+        let mut effects = [
+            property::SHADER,
+            property::SHAPE,
+            property::FILTER,
+            property::BACKDROP_FILTER,
+        ];
+        effects.sort_unstable();
+        assert_eq!(names, effects);
+    }
+}

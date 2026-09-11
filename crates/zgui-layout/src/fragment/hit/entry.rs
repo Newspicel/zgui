@@ -2,7 +2,7 @@
 
 use zgui_dom::NodeKey;
 use zgui_geom::{Corners, Device, DevicePx, Rect, Vec2};
-use zgui_scene::{ClipId, DrawOrder, SpatialId};
+use zgui_scene::{ClipId, SpatialId};
 
 use crate::fragment::FragKey;
 use crate::fragment::hit::pointer_events::PointerEvents;
@@ -38,7 +38,7 @@ pub struct HitEntry {
     /// Carried rather than derived: the topmost fragment under a point is the last one painted, and
     /// the order that decides that is the same order the display list is emitted in. An index that
     /// invented its own would answer differently from what is on the screen.
-    pub order: DrawOrder,
+    pub order: crate::fragment::hit::HitOrder,
     /// The clip chain the fragment is drawn under. A point outside any link of it is not on the
     /// fragment however far inside its own rectangle it falls.
     pub clip: ClipId,

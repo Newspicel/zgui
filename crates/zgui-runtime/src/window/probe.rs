@@ -22,8 +22,8 @@ impl Window {
     /// over the fragments as they are now, holding nothing from before — so the two can be held
     /// against each other.
     pub fn forget_hit_index(&mut self) {
-        let layout = self.layout.borrow();
-        self.hit.rebuild(&layout, self.scale);
+        let mut layout = self.layout.borrow_mut();
+        self.hit.rebuild(&mut layout, self.scale);
     }
 
     /// The elements under a point on the surface, the document's root first.

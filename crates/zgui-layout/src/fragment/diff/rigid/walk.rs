@@ -33,6 +33,10 @@ pub(super) struct Walk<'a, 'b, D: FrameDirty> {
     by: Size<DevicePx, Device>,
     /// Device pixels per CSS pixel.
     scale: f32,
+    /// Whether the offset is a scroll, which every box's composed shift records, or a layout
+    /// move, which it does not: the shift is what a scroll above the box adds up to, and a box
+    /// that layout placed elsewhere was scrolled by nothing.
+    scrolls: bool,
 }
 
 impl<'a, 'b, D: FrameDirty> Walk<'a, 'b, D> {
@@ -44,6 +48,7 @@ impl<'a, 'b, D: FrameDirty> Walk<'a, 'b, D> {
         dirty: &'a mut D,
         by: Size<DevicePx, Device>,
         scale: f32,
+        scrolls: bool,
     ) -> Self {
         Self {
             store,
@@ -52,6 +57,7 @@ impl<'a, 'b, D: FrameDirty> Walk<'a, 'b, D> {
             dirty,
             by,
             scale,
+            scrolls,
         }
     }
 
@@ -67,16 +73,45 @@ impl<'a, 'b, D: FrameDirty> Walk<'a, 'b, D> {
         clip: ClipId,
         shift: Size<DevicePx, Device>,
     ) {
+        self.subtree_from::<T>(key, clip, shift, true);
+    }
+
+    /// The descent, told whether it is still above the first element of the moved subtree.
+    ///
+    /// The accessibility tree measures every node from the nearest ancestor that carries a
+    /// transform, and a subtree carried as one piece keeps every such distance inside it. What
+    /// moved, as that tree states it, is the topmost element on each path down from the moved
+    /// box — the frontier — so that is what the walk reports, and nothing below it.
+    fn subtree_from<T: Duty>(
+        &mut self,
+        key: BoxKey,
+        clip: ClipId,
+        shift: Size<DevicePx, Device>,
+        frontier: bool,
+    ) {
         if T::MOVES {
             counter::bump(Counter::NodesVisited);
-            self.store.state_mut(key).composed_shift.0 += self.by.width.0;
-            self.store.state_mut(key).composed_shift.1 += self.by.height.0;
+            if self.scrolls {
+                self.store.state_mut(key).composed_shift.0 += self.by.width.0;
+                self.store.state_mut(key).composed_shift.1 += self.by.height.0;
+            } else {
+                counter::bump(Counter::BoxesShifted);
+            }
+            // What this walk is entitled to claim: every box it carries was composed from the
+            // result the engine holds for it, so carrying it is the same as composing it again.
+            debug_assert!(
+                self.store
+                    .state(key)
+                    .is_none_or(|state| state.unrounded == state.composed),
+                "a subtree was carried whose engine result its fragments were not composed from"
+            );
         }
 
         let inner = self.offset_own::<T>(key, clip, shift);
         self.offset_lines::<T>(key, inner);
-        if T::INDEXES {
-            self.note_move(key);
+        let mut frontier = frontier;
+        if T::INDEXES && frontier {
+            frontier = !self.note_move(key);
         }
 
         // What this box's own children are carried by, which is what it is carried by less
@@ -100,7 +135,7 @@ impl<'a, 'b, D: FrameDirty> Walk<'a, 'b, D> {
         // child list. A descent that could add or remove a box would have to take a copy again.
         let mut position = 0;
         while let Some(&child) = self.store.node(key).children.get(position) {
-            self.subtree::<T>(child, inner, inner_shift);
+            self.subtree_from::<T>(child, inner, inner_shift, frontier);
             position += 1;
         }
     }
@@ -230,12 +265,13 @@ impl<'a, 'b, D: FrameDirty> Walk<'a, 'b, D> {
         self.hit.carry(frag, entry);
     }
 
-    /// Records that a moved control's accessibility node moved with it.
+    /// Records that the element this box came from moved, answering whether there was one.
     ///
-    /// An accessibility node's bounds are geometry, so a control that moved is a control an
-    /// assistive technology has been told the wrong position for. A plain layout box that moved is
-    /// not, and the declaration test is what keeps this proportional to what a document means
-    /// rather than to how many boxes it has.
+    /// An accessibility node's geometry is stated relative to the nearest ancestor that carries a
+    /// transform, so the element at the top of a moved subtree is the one whose statement is now
+    /// wrong, whatever it declares: a plain row that moved carries the transform its cells are
+    /// measured from. A box that came from no element — an anonymous one — reports nothing, and
+    /// answers `false` so the walk goes on looking for the elements below it.
     ///
     /// It is reported as a *move* and not as a general obligation, which is the whole of what this
     /// path is entitled to claim: the subtree owes no work, so its semantics, its name, its
@@ -247,10 +283,11 @@ impl<'a, 'b, D: FrameDirty> Walk<'a, 'b, D> {
     /// phases itself, in the same call, before anything downstream reads a mark. Writing them here
     /// would be a walk to every ancestor of every moved box to raise obligations the next few lines
     /// clear again.
-    fn note_move(&mut self, key: BoxKey) {
-        let node = self.store.get(key).and_then(|record| record.source);
-        if self.dirty.is_semantic(node) {
-            self.dirty.moved(node);
-        }
+    fn note_move(&mut self, key: BoxKey) -> bool {
+        let Some(node) = self.store.get(key).and_then(|record| record.source) else {
+            return false;
+        };
+        self.dirty.moved(Some(node));
+        true
     }
 }

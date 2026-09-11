@@ -2,11 +2,13 @@
 
 use smallvec::SmallVec;
 use zgui_arena::SlotVec;
+use zgui_dom::side::BoxKey;
 use zgui_geom::{Device, DevicePx, Point};
 use zgui_profile::{Counter, counter};
 use zgui_scene::{ClipTable, SpatialTree};
 
 use crate::fragment::FragKey;
+use crate::fragment::hit::HitOrder;
 use crate::fragment::hit::entry::HitEntry;
 use crate::fragment::hit::rtree::{Carried, Forest, Placed};
 use crate::fragment::hit::transform;
@@ -18,6 +20,13 @@ use crate::tree::store::LayoutStore;
 /// a better one than the incremental inserts did. Below it, rebuilding costs the whole document to
 /// service work proportional to what moved.
 pub const CHURN_FRACTION: usize = 4;
+
+/// The distance a bulk build leaves between consecutive order keys.
+///
+/// Room for a million fragments to be born between two neighbours before the keys have to be
+/// handed out again, which a single frame never needs and a long-lived document reaches only
+/// through the renumber the fragment pass asks for when a gap closes.
+pub const ORDER_STRIDE: HitOrder = 1 << 20;
 
 /// Hit-test index.
 ///
@@ -244,7 +253,7 @@ impl HitIndex {
     /// For when painting order itself moved — a `z-index` change restacks the document and every
     /// entry's order may be different — or when so much has been updated one entry at a time that
     /// the hierarchy is no longer a good one.
-    pub fn rebuild(&mut self, store: &LayoutStore, scale: f32) {
+    pub fn rebuild(&mut self, store: &mut LayoutStore, scale: f32) {
         self.generation += 1;
         self.entries.clear();
         self.forest.clear();
@@ -258,7 +267,7 @@ impl HitIndex {
         let Some(root) = store.root() else {
             return;
         };
-        let mut order = 0;
+        let mut order = ORDER_STRIDE;
         for box_ in crate::fragment::stacking::paint_order(store, root) {
             for &frag in store.fragments_of_box(box_) {
                 let Some(entry) = crate::fragment::hit::entry_for(store, frag, order, scale) else {
@@ -266,9 +275,43 @@ impl HitIndex {
                 };
                 self.forest.insert(frag, entry.space, entry.envelope);
                 self.entries.insert(frag, entry);
-                order += 1;
+                order += ORDER_STRIDE;
             }
         }
+        self.fold_orders(store, root);
+    }
+
+    /// The order key one fragment holds, if it is indexed.
+    pub fn order_of(&self, frag: FragKey) -> Option<HitOrder> {
+        self.entries.get(frag).map(|entry| entry.order)
+    }
+
+    /// Writes onto every box's fragments the range of order keys its subtree spans.
+    ///
+    /// The range is what the fragment pass places a newborn fragment between: a subtree's keys
+    /// are contiguous in painting order, so what comes before a box is the end of the range of
+    /// whatever is painted before it. Minimum and maximum are the same whatever order the
+    /// children are visited in, so this walks the layout list and asks nothing about painting.
+    fn fold_orders(&self, store: &mut LayoutStore, key: BoxKey) -> (HitOrder, HitOrder) {
+        let mut range = (HitOrder::MAX, 0);
+        for &frag in store.fragments_of_box(key) {
+            if let Some(entry) = self.entries.get(frag) {
+                range = (range.0.min(entry.order), range.1.max(entry.order));
+            }
+        }
+        let mut position = 0;
+        while let Some(&child) = store.node(key).children.get(position) {
+            let below = self.fold_orders(store, child);
+            range = (range.0.min(below.0), range.1.max(below.1));
+            position += 1;
+        }
+        let pieces: SmallVec<[FragKey; 4]> = store.fragments_of_box(key).iter().copied().collect();
+        for frag in pieces {
+            if let Some(fragment) = store.fragment_mut(frag) {
+                fragment.subtree_order = range;
+            }
+        }
+        range
     }
 
     /// The fragments under `point`, topmost first.
@@ -355,7 +398,7 @@ impl HitIndex {
         // puts a handful under any one point, and a heap allocation per pointer move is the whole
         // of what a query costs beyond the descents it is made of.
         let mut candidates: SmallVec<[FragKey; 16]> = SmallVec::new();
-        let mut hits: SmallVec<[(zgui_scene::DrawOrder, FragKey); 8]> = SmallVec::new();
+        let mut hits: SmallVec<[(HitOrder, FragKey); 8]> = SmallVec::new();
         for (space, tree) in self.forest.trees() {
             // Once per coordinate system rather than once per candidate, and a system that
             // collapses the plane — a `scale(0)`, a rotation seen exactly edge-on — dismisses

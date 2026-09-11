@@ -7,11 +7,12 @@
 
 use std::collections::{BTreeSet, HashMap};
 
-use accesskit::{Node, NodeId, Rect};
+use accesskit::{Node, NodeId};
 use zgui_dom::NodeKey;
 use zgui_scene::SpatialId;
 
 use crate::id::to_a11y;
+use crate::project::geometry::Geometry;
 use crate::project::relations;
 
 /// Every node the consumer is currently holding, as this side last sent it.
@@ -154,15 +155,12 @@ impl Snapshots {
     ///
     /// Answers `None` when the consumer is not holding the node at all, and when it is already
     /// holding this rectangle.
-    pub fn remeasure(&mut self, node: NodeKey, bounds: Option<Rect>) -> Option<Node> {
+    pub fn remeasure(&mut self, node: NodeKey, geometry: &Geometry) -> Option<Node> {
         let held = self.nodes.get_mut(&node)?;
-        if held.bounds() == bounds {
+        if Geometry::of_node(held) == *geometry {
             return None;
         }
-        match bounds {
-            Some(rect) => held.set_bounds(rect),
-            None => held.clear_bounds(),
-        }
+        geometry.apply(held);
         Some(held.clone())
     }
 

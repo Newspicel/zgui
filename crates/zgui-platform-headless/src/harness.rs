@@ -265,6 +265,10 @@ impl<A: AppHandler> Harness<A> {
 
     /// Delivers one event to the first surface the application created.
     ///
+    /// This is the way to put the engine-owned interaction states — `:hover`, `:active`,
+    /// `:focus` — into a headless document: a view cannot assert them, so a test that wants
+    /// hover styling delivers a [`SurfaceEvent::Pointer`] here and settles the frame.
+    ///
     /// # Panics
     ///
     /// Panics when no surface exists, because an event delivered to nothing is a test that is

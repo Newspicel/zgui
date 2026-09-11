@@ -10,6 +10,9 @@ counters! {
     /// Elements whose cascade ran again while their selector matches were kept.
     ElementsRecascaded => elements_recascaded, Group::BackendNeutral;
 
+    /// Elements the style traversal entered, styled or merely looked at.
+    ElementsTraversed => elements_traversed, Group::BackendNeutral;
+
     /// Individual selector-against-element tests performed.
     SelectorMatches => selector_matches, Group::BackendNeutral;
 
@@ -32,7 +35,6 @@ counters! {
     /// per mark from one that walks the child list on every mark. The second is invisible to every
     /// other counter here: the same children are marked, the same nodes are visited, and the same
     /// work comes out.
-    DirtyChildSteps => dirty_child_steps, Group::BackendNeutral;
 
     /// Boxes rebuilt from their element.
     BoxesRebuilt => boxes_rebuilt, Group::BackendNeutral;
@@ -83,6 +85,12 @@ counters! {
 
     /// Fragments whose geometry was recomputed rather than carried over.
     FragmentsRebuilt => fragments_rebuilt, Group::BackendNeutral;
+
+    /// Boxes layout placed elsewhere that were carried with their subtrees instead of composed.
+    BoxesShifted => boxes_shifted, Group::BackendNeutral;
+
+    /// Elements that took a moved custom property map into their style without a cascade.
+    CustomMapsRefreshed => custom_maps_refreshed, Group::BackendNeutral;
 
     /// Fragments whose paint operations were emitted afresh instead of replayed from cache.
     Repaints => repaints, Group::BackendNeutral;

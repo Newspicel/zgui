@@ -160,9 +160,7 @@ impl Window {
             scene.clips.use_of(fragment.clip);
         });
         drop(layout);
-        scene
-            .clips
-            .evict_unreachable_chains(KEEP_GENERATIONS, CAP);
+        scene.clips.evict_unreachable_chains(KEEP_GENERATIONS, CAP);
     }
 
     /// Drops everything every budgeted cache holds.

@@ -165,6 +165,12 @@ impl Window {
             return;
         }
         self.restyle();
+        // Between the cascade and the layout, exactly as the main pass orders them: a paragraph
+        // flattened by the layout below claims its brush slot against the cascade result it was
+        // styled by, and a text colour that moved in this cascade has to be written through its
+        // slot before that happens. Skipped here, a row born in this settle is shaped into a slot
+        // the frame never learns about, and every later colour change misses it.
+        self.update_text_brushes();
         self.build_boxes();
         self.lay_out();
     }

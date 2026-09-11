@@ -123,6 +123,7 @@ mod tests {
             placements: &zgui_scene::Placements::EMPTY,
             scale: 1.0,
             focus: None,
+            scroll: None,
         };
         let relations = Relations {
             labelled_by: vec![alive],
@@ -154,6 +155,7 @@ mod tests {
             placements: &zgui_scene::Placements::EMPTY,
             scale: 1.0,
             focus: None,
+            scroll: None,
         };
         let target = to_a11y(document.store().key_of(label));
 

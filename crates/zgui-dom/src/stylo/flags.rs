@@ -61,6 +61,25 @@ impl Node<'_> {
         self.record().dirty().mark_subtree(STYLE_WORK);
     }
 
+    /// Whether the custom property map this element inherits from moved since its style was built.
+    pub fn has_custom_map_changed(self) -> bool {
+        self.record().has_atomic(atomics::CUSTOM_MAP_CHANGED)
+    }
+
+    /// Records that the custom property map this element inherits from has moved.
+    pub fn note_custom_map_changed(self) {
+        self.record().set_atomic(atomics::CUSTOM_MAP_CHANGED);
+    }
+
+    /// Takes the custom-map-changed note, answering whether it was set.
+    pub fn take_custom_map_changed(self) -> bool {
+        let was = self.has_custom_map_changed();
+        if was {
+            self.record().clear_atomic(atomics::CUSTOM_MAP_CHANGED);
+        }
+        was
+    }
+
     /// Whether an animation-only restyle is pending below this node.
     pub fn has_animation_work_below(self) -> bool {
         self.record()

@@ -129,6 +129,14 @@ pub(crate) struct LayoutStyle {
     pub(crate) grid_column: Line<GridPlacement<Ident>>,
     /// Which size slots substitute a measurement at read time.
     pub(crate) keywords: Keywords,
+    /// Whether any length of this style resolves against the containing block, per axis.
+    ///
+    /// A layout question carries the containing block's size so that percentages inside the box
+    /// can resolve against it. A box with no percentage on an axis answers the same whatever that
+    /// size is, and a cache that keyed on it anyway would miss for every child of a container
+    /// whose content size moved — which is every sibling of a row that grew. `calc()` is counted
+    /// as dependent without looking inside it.
+    pub(crate) parent_dependency: [bool; 2],
     /// `box-sizing`.
     pub(crate) box_sizing: BoxSizing,
     /// The writing direction.
@@ -235,7 +243,8 @@ impl LayoutStyle {
 
         let (explicit, auto) = aspect::split(&position_group.aspect_ratio);
 
-        Self {
+        let mut lowered = Self {
+            parent_dependency: [false, false],
             inset,
             size: Size {
                 width: length::size(&position_group.width, scale, calc, None),
@@ -346,7 +355,45 @@ impl LayoutStyle {
             collapses_as_flex_item: style.get_inherited_box().visibility
                 == VisibilityValue::Collapse
                 && box_.display.outside() != zgui_css::values::size::DisplayOutside::None,
-        }
+        };
+        lowered.parent_dependency = lowered.parent_dependency_of_lengths();
+        lowered
+    }
+
+    /// Which axes of the containing block this style's own lengths resolve against.
+    ///
+    /// Width: the horizontal sizes and insets, and every margin and padding — CSS resolves all
+    /// eight against the containing block's *width*. Height: the vertical sizes and insets only.
+    /// Border widths cannot be percentages. Gaps, `flex-basis` and grid tracks are resolved by the
+    /// container's own algorithm against its own size and never through the child's question.
+    fn parent_dependency_of_lengths(&self) -> [bool; 2] {
+        let against = |raw: taffy::CompactLength| {
+            raw.is_calc()
+                || matches!(
+                    raw.tag(),
+                    taffy::CompactLength::PERCENT_TAG
+                        | taffy::CompactLength::FIT_CONTENT_PERCENT_TAG
+                )
+        };
+        let width = against(self.size.width.into_raw())
+            || against(self.min_size.width.into_raw())
+            || against(self.max_size.width.into_raw())
+            || against(self.inset.left.into_raw())
+            || against(self.inset.right.into_raw())
+            || against(self.margin.left.into_raw())
+            || against(self.margin.right.into_raw())
+            || against(self.margin.top.into_raw())
+            || against(self.margin.bottom.into_raw())
+            || against(self.padding.left.into_raw())
+            || against(self.padding.right.into_raw())
+            || against(self.padding.top.into_raw())
+            || against(self.padding.bottom.into_raw());
+        let height = against(self.size.height.into_raw())
+            || against(self.min_size.height.into_raw())
+            || against(self.max_size.height.into_raw())
+            || against(self.inset.top.into_raw())
+            || against(self.inset.bottom.into_raw());
+        [width, height]
     }
 
     /// `width`/`height` with any keyword substituted from `measured`.
@@ -499,6 +546,31 @@ mod tests {
 
     fn length(px: f32) -> CssLp {
         CssLp::new_length(Length::new(px))
+    }
+
+    /// A style of fixed lengths answers the same whatever its containing block is.
+    #[test]
+    fn fixed_lengths_depend_on_no_containing_block_axis() {
+        let lowered = lower_with(|draft| {
+            draft.position_group().width = SizeValue::LengthPercentage(NonNegative(length(40.0)));
+            draft.position_group().height = SizeValue::LengthPercentage(NonNegative(length(20.0)));
+        });
+        assert_eq!(lowered.parent_dependency, [false, false]);
+    }
+
+    /// A vertical padding percentage resolves against the containing block's width, so it is a
+    /// dependency on the width axis and on no other.
+    #[test]
+    fn a_percentage_names_the_axis_it_resolves_against() {
+        let lowered = lower_with(|draft| {
+            draft.padding().padding_top = NonNegative(zgui_css::values::length::percent(0.02));
+        });
+        assert_eq!(lowered.parent_dependency, [true, false]);
+        let lowered = lower_with(|draft| {
+            draft.position_group().height =
+                SizeValue::LengthPercentage(NonNegative(zgui_css::values::length::percent(0.5)));
+        });
+        assert_eq!(lowered.parent_dependency, [false, true]);
     }
 
     #[test]
