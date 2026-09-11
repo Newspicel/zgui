@@ -342,8 +342,9 @@ fn a_custom_property_change_recascades_its_readers_only() {
             frame.elements_recascaded + frame.elements_restyled
         );
         assert_eq!(
-            frame.custom_maps_refreshed, 3001,
-            "the column and every cell take the map without a cascade"
+            frame.custom_maps_refreshed, 1,
+            "the column takes the map without a cascade; the cells read nothing of it and are \
+             not visited at all"
         );
     }
 }
@@ -554,4 +555,149 @@ fn two_distant_mutations_are_both_styled() {
             frame.elements_traversed
         );
     }
+}
+
+/// A custom property change visits the subtrees that read it and skips the ones that do not.
+#[test]
+fn a_custom_property_change_skips_subtrees_that_read_nothing_of_it() {
+    let _guard = measuring();
+    let (mut harness, rows) = themed(
+        500,
+        6,
+        "row { background-color: var(--accent, rgb(1, 1, 1)) }",
+    );
+
+    counter::reset();
+    let root = harness.root;
+    set_custom(&mut harness, root, "accent", "rgb(0, 9, 0)");
+    harness.frame();
+    let frame = counter::snapshot();
+
+    assert_eq!(background(&harness, rows[499]), (0, 9, 0));
+    if COUNTERS_ENABLED {
+        assert_eq!(frame.elements_recascaded + frame.elements_restyled, 501);
+        assert_eq!(
+            frame.custom_subtrees_skipped, 3000,
+            "traversed {} refreshed {} skipped {}",
+            frame.elements_traversed, frame.custom_maps_refreshed, frame.custom_subtrees_skipped
+        );
+        assert!(
+            frame.elements_traversed <= 502,
+            "the traversal entered {} elements for five hundred readers",
+            frame.elements_traversed
+        );
+    }
+}
+
+/// A reader that appears under a subtree the change skipped cascades against the current map.
+///
+/// The skipped subtree still holds the old map and the bit that says so; the traversal that
+/// reaches the new reader passes through its parent first, which takes the map then, before the
+/// reader's own cascade reads it.
+#[test]
+fn a_reader_inserted_under_a_skipped_subtree_reads_the_current_value() {
+    let _guard = measuring();
+    let (mut harness, rows) = themed(
+        50,
+        4,
+        "row { background-color: var(--accent, rgb(1, 1, 1)) }
+         cell.reader { color: var(--accent, rgb(1, 1, 1)) }",
+    );
+    let cell = first_cell(&harness, rows[20]);
+
+    counter::reset();
+    let root = harness.root;
+    set_custom(&mut harness, root, "accent", "rgb(9, 0, 0)");
+    harness.frame();
+    let frame = counter::snapshot();
+    if COUNTERS_ENABLED {
+        assert_eq!(frame.custom_subtrees_skipped, 200, "every cell was skipped");
+    }
+
+    // The traversal starts at the cell, whose map is stale: the cell takes its parent's map
+    // first and cascades against it.
+    harness.set_classes(cell, &["reader"]);
+    let pass = harness.frame();
+    assert!(pass.traversed);
+    assert_eq!(color(&harness, cell), (9, 0, 0));
+
+    // A new element under a skipped cell: its first cascade reads the cell's map, which the
+    // traversal refreshed on its way down.
+    let deep = harness.append(first_cell(&harness, rows[30]), "cell");
+    harness.add_author("cell cell { color: var(--accent, rgb(1, 1, 1)) }");
+    harness.frame();
+    assert_eq!(color(&harness, deep), (9, 0, 0));
+}
+
+/// A subtree whose only reader stopped reading is skipped by the next change.
+#[test]
+fn a_subtree_whose_reader_left_is_skipped_by_the_next_change() {
+    let _guard = measuring();
+    let (mut harness, rows) = themed(
+        50,
+        4,
+        "row { background-color: var(--accent, rgb(1, 1, 1)) }
+         cell.reader { color: var(--accent, rgb(1, 1, 1)) }",
+    );
+    let cell = first_cell(&harness, rows[20]);
+    harness.set_classes(cell, &["reader"]);
+    harness.frame();
+    harness.retire_all();
+
+    counter::reset();
+    let root = harness.root;
+    set_custom(&mut harness, root, "accent", "rgb(9, 0, 0)");
+    harness.frame();
+    let frame = counter::snapshot();
+    assert_eq!(color(&harness, cell), (9, 0, 0));
+    if COUNTERS_ENABLED {
+        assert_eq!(
+            frame.custom_subtrees_skipped, 199,
+            "the reading cell was visited"
+        );
+    }
+
+    harness.set_classes(cell, &[]);
+    harness.frame();
+    harness.retire_all();
+
+    counter::reset();
+    set_custom(&mut harness, root, "accent", "rgb(0, 9, 0)");
+    harness.frame();
+    let frame = counter::snapshot();
+    if COUNTERS_ENABLED {
+        assert_eq!(
+            frame.custom_subtrees_skipped, 200,
+            "the cell that stopped reading is skipped"
+        );
+    }
+    assert_eq!(background(&harness, rows[20]), (0, 9, 0));
+}
+
+/// A font size that moved changes nothing an accessibility node states except its rectangle.
+#[test]
+fn a_font_size_change_marks_no_element_for_the_accessibility_phase() {
+    let _guard = measuring();
+    let (mut harness, rows) = themed(50, 4, "cell { white-space: nowrap; overflow: hidden }");
+    let root = harness.root;
+    harness.edit(|edit| {
+        edit.set_style_property(root, "font-size", Some("20px"));
+    });
+    harness.frame();
+    let mut marked = Vec::new();
+    for row in &rows {
+        if harness.owed(*row).contains(zgui_bits::Dirty::A11Y) {
+            marked.push(("row", *row));
+        }
+        let cell = first_cell(&harness, *row);
+        if harness.owed(cell).contains(zgui_bits::Dirty::A11Y) {
+            marked.push(("cell", cell));
+        }
+    }
+    assert!(
+        marked.is_empty(),
+        "{} elements owe the accessibility phase for a font size: {:?}",
+        marked.len(),
+        &marked[..marked.len().min(4)]
+    );
 }

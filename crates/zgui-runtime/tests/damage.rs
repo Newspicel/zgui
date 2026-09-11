@@ -890,3 +890,55 @@ fn a_blinking_caret_in_a_moved_field_damages_the_pixels_it_is_drawn_on() {
     }
     harness.shut_down();
 }
+
+/// A font size that moved keeps every box and every fragment.
+///
+/// A font change is classified as geometry: the boxes stay what they are and the text inside them
+/// is shaped again. Rebuilding the tree for it would take every fragment, every paint record and
+/// every hit entry with it — the whole-window repaint a keystroke used to cost.
+#[test]
+fn changing_the_root_font_size_does_not_rebuild_the_box_tree() {
+    let size = RwSignal::new(14.0f32);
+    let log = Log::default();
+    let mut app = mount(CSS, &log, move |cx: &mut BuildCx<'_>| {
+        Box::new(
+            zgui_elements::column()
+                .class("root")
+                .style_property("font-size", move || Some(format!("{}px", size.get())))
+                .child(zgui_elements::column().class("swatch"))
+                .child(zgui_elements::text().child("hello there"))
+                .into_view()
+                .build(cx),
+        )
+    });
+    app.settle(8);
+    assert_mounted_fully(&log);
+    let window_boxes = box_names(&app.app().windows()[0]);
+    let window_fragments = fragment_names(&app.app().windows()[0]);
+    let line_before = support::line_boxes(&app.app().windows()[0])[0];
+
+    let before = zgui_profile::counter::snapshot();
+    size.set(20.0);
+    app.settle(8);
+    let moved = before.delta(&zgui_profile::counter::snapshot());
+
+    assert_eq!(
+        box_names(&app.app().windows()[0]),
+        window_boxes,
+        "a font size that moved replaced the boxes instead of keeping them"
+    );
+    assert_eq!(
+        fragment_names(&app.app().windows()[0]),
+        window_fragments,
+        "the fragments were made again for boxes that were kept"
+    );
+    let line_after = support::line_boxes(&app.app().windows()[0])[0];
+    assert!(
+        line_after.size.height > line_before.size.height,
+        "the line is still {} tall at the larger size",
+        line_after.size.height.0
+    );
+    // The counters are shared with every other case in this target and none of them takes the
+    // lock, so the names above are the assertion; what was read is only kept for a debugger.
+    let _ = moved;
+}

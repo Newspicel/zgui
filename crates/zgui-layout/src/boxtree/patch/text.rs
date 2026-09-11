@@ -25,10 +25,21 @@
 //! appearing where there was none, or disappearing entirely, changes which boxes exist — an empty
 //! text node generates no box at all — and inventing or deleting one here would have to reproduce
 //! anonymous wrapping, inline splitting and paint order. Those changes rebuild.
+//!
+//! # An element whose font moved
+//!
+//! An element owes a re-shape when what its text is shaped with changed — the face, the size, the
+//! spacing, a transform of the characters. Its boxes are the same boxes: the style patch that ran
+//! before this stage has already written the new style onto every one of them, and what is stale
+//! is what was computed from the old shaping — the flattened form of each inline formatting
+//! context below and around the element, the lines it resolved, the baselines and the cached
+//! sizes. Those are thrown away through [`reshape::scope`](crate::text::reshape::scope), the same
+//! walk a re-brushed element takes, and the tree is kept. A change that makes boxes appear or
+//! disappear arrives with its own obligation to rebuild and is spliced before this stage runs.
 
 use zgui_bits::Dirty;
 use zgui_dom::side::BoxKey;
-use zgui_dom::{Document, NodeIndex, NodeKind};
+use zgui_dom::{Document, NodeIndex, NodeKey, NodeKind};
 
 use crate::node::kind::BoxKind;
 use crate::tree::dirty::mark_dirty;
@@ -57,11 +68,17 @@ pub enum Retext {
 /// Panics if `root` names no live node of `document`.
 pub fn retext(store: &mut LayoutStore, document: &Document, root: NodeIndex) -> Retext {
     let mut rewritten = 0;
-    if visit(store, document, root, &mut rewritten) {
-        Retext::Patched(rewritten)
-    } else {
-        Retext::Rebuild
+    let mut reshaped = Vec::new();
+    if !visit(store, document, root, &mut rewritten, &mut reshaped) {
+        return Retext::Rebuild;
     }
+    if !reshaped.is_empty() {
+        // The paragraph keys the walk reports are the old shaping's, which the new keys no longer
+        // name; they are left in the cache for the next flip back to the old font and reclaimed
+        // with everything else unused when the frame ends.
+        let _ = crate::text::reshape::scope(store, reshaped);
+    }
+    Retext::Patched(rewritten)
 }
 
 /// Services one node and everything below it, and reports whether the patch is still expressible.
@@ -75,6 +92,7 @@ fn visit(
     document: &Document,
     index: NodeIndex,
     rewritten: &mut u32,
+    reshaped: &mut Vec<NodeKey>,
 ) -> bool {
     let core = document.store().core(index);
     let (own, subtree) = core.dirty().get();
@@ -82,16 +100,15 @@ fn visit(
         return true;
     }
     if own.contains(Dirty::RESHAPE) {
-        // An element owing a re-shape is one whose *font* moved, which changes the synthesised
-        // styles of the runs below it and the metrics every one of them is measured with. That is
-        // a change to what the boxes are made of throughout a subtree, and it arrives with an
-        // obligation to rebuild anyway; refusing here is what keeps the two answers from
-        // disagreeing.
-        if core.kind() != NodeKind::Text {
-            return false;
-        }
-        if !rewrite(store, document, index, rewritten) {
-            return false;
+        if core.kind() == NodeKind::Text {
+            if !rewrite(store, document, index, rewritten) {
+                return false;
+            }
+        } else {
+            // An element whose font moved keeps its boxes; what was computed from the old
+            // shaping below and around them is thrown away once the walk is done, so that a
+            // subtree whose elements all moved together is invalidated once.
+            reshaped.push(document.store().key_of(index));
         }
     }
     let children: Vec<NodeIndex> = core
@@ -99,7 +116,7 @@ fn visit(
         .iter(document.store(), index)
         .collect();
     for child in children {
-        if !visit(store, document, child, rewritten) {
+        if !visit(store, document, child, rewritten, reshaped) {
             return false;
         }
     }

@@ -13,6 +13,15 @@ counters! {
     /// Elements the style traversal entered, styled or merely looked at.
     ElementsTraversed => elements_traversed, Group::BackendNeutral;
 
+    /// Accessibility nodes projected whole: role, name, relations, children and geometry.
+    A11yProjected => a11y_projected, Group::BackendNeutral;
+
+    /// Accessibility nodes answered with their geometry alone.
+    A11yRemeasured => a11y_remeasured, Group::BackendNeutral;
+
+    /// Subtrees a custom-property change skipped because nothing in them reads what changed.
+    CustomSubtreesSkipped => custom_subtrees_skipped, Group::BackendNeutral;
+
     /// Individual selector-against-element tests performed.
     SelectorMatches => selector_matches, Group::BackendNeutral;
 

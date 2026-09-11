@@ -985,7 +985,11 @@ impl Window {
         self.broad_restyle = false;
         let mut layout = self.layout.borrow_mut();
         if pass.styled > 0 && layout.root().is_some() {
-            zgui_layout::boxtree::patch::restyle(&mut layout, &document, &pass.styled_nodes());
+            zgui_layout::boxtree::patch::restyle(
+                &mut layout,
+                &document,
+                pass.records.iter().map(|record| record.index),
+            );
         }
         pass.styled
     }
@@ -1002,8 +1006,9 @@ impl Window {
         if updates.is_empty() {
             return;
         }
-        self.brushes_moved = true;
-        let split = super::brushes::apply(&mut self.text_slots, self.text.text_paints(), updates);
+        let applied = super::brushes::apply(&mut self.text_slots, self.text.text_paints(), updates);
+        self.brushes_moved |= applied.recoloured;
+        let split = applied.split;
         if split.is_empty() {
             return;
         }
@@ -1211,7 +1216,8 @@ impl Window {
             // [`Tier::Place`](zgui_anim::Tier::Place).
             placements: self.animator.placements(),
         };
-        self.a11y_moves.clear();
+        // Not cleared here: a frame that lays out twice — a scroll delivered to a listener that
+        // re-renders — reports both passes' moves, and the accessibility stage drains them.
         let mut marks = zgui_layout::fragment::diff::DocumentMarks::for_document(&mut document)
             .recording_moves(&mut self.a11y_moves);
         // Before the first walk of the frame and no other: what stands here on a later pass is

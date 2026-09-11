@@ -271,3 +271,113 @@ fn a_box_that_stops_producing_a_piece_damages_where_that_piece_was() {
     store.recycle();
     assert!(store.fragment(last).is_none());
 }
+
+/// A dirty answer for one semantic element, recording what the pass reported about it.
+struct Semantic {
+    /// The element that owes work, and declares semantics.
+    node: Option<zgui_dom::NodeKey>,
+    /// What it owes.
+    bits: Dirty,
+    /// What was marked while the pass ran.
+    marked: Vec<(Option<zgui_dom::NodeKey>, Dirty)>,
+    /// The elements reported as moved.
+    moved: Vec<Option<zgui_dom::NodeKey>>,
+}
+
+impl FrameDirty for Semantic {
+    fn own(&self, node: Option<zgui_dom::NodeKey>) -> Dirty {
+        if node.is_some() && node == self.node {
+            self.bits
+        } else {
+            Dirty::empty()
+        }
+    }
+
+    fn subtree(&self, _node: Option<zgui_dom::NodeKey>) -> Dirty {
+        Dirty::all()
+    }
+
+    fn mark(&mut self, node: Option<zgui_dom::NodeKey>, bits: Dirty) {
+        self.marked.push((node, bits));
+    }
+
+    fn moved(&mut self, node: Option<zgui_dom::NodeKey>) {
+        self.moved.push(node);
+    }
+
+    fn is_semantic(&self, node: Option<zgui_dom::NodeKey>) -> bool {
+        node.is_some() && node == self.node
+    }
+
+    fn retire(&mut self, _node: Option<zgui_dom::NodeKey>, _phase: Dirty) {}
+}
+
+/// A box that only grew is reported as moved — its rectangle and nothing else — while a box
+/// that started clipping its children owes the whole projection.
+#[test]
+fn a_box_that_only_grew_owes_the_accessibility_tree_its_rectangle_alone() {
+    let mut fixture = Fixture::new(
+        Element::new("root").children(vec![Element::new("a"), Element::new("b")]),
+        "root { display: block; width: 200px }
+         a { display: block; height: 30px }
+         b { display: block; height: 30px; background-color: #246 }
+         b.tall { height: 50px }
+         b.clips { overflow: hidden }",
+    );
+    let mut store = fixture.box_tree();
+    let mut content = measurer();
+    let mut frame = lay_out(&mut store, &mut content, 200.0, 200.0);
+    let target = second_child(&store);
+    let node = store.node(target).source;
+    let index = fixture
+        .document
+        .store()
+        .index_of(node.expect("the box came from an element"))
+        .expect("a live element");
+
+    fixture.edit_restyle_and_patch(&mut store, |edit| {
+        edit.set_style_property(index, "height", Some("50px"));
+    });
+    support::lay_out_only(&mut store, &mut content, 200.0, 200.0);
+    let root = store.root().expect("a root");
+    let mut dirty = Semantic {
+        node,
+        bits: Dirty::RELAYOUT,
+        marked: Vec::new(),
+        moved: Vec::new(),
+    };
+    fragments(&mut frame, &mut store, root, &mut dirty);
+    assert_eq!(
+        dirty.moved,
+        vec![node],
+        "a box that grew was not reported as moved"
+    );
+    assert!(
+        !dirty
+            .marked
+            .iter()
+            .any(|(marked, bits)| *marked == node && bits.contains(Dirty::A11Y)),
+        "a box that only grew was marked for a whole projection: {:?}",
+        dirty.marked
+    );
+
+    fixture.edit_restyle_and_patch(&mut store, |edit| {
+        edit.set_style_property(index, "overflow", Some("hidden"));
+    });
+    support::lay_out_only(&mut store, &mut content, 200.0, 200.0);
+    let mut dirty = Semantic {
+        node,
+        bits: Dirty::RELAYOUT | Dirty::REFRAGMENT,
+        marked: Vec::new(),
+        moved: Vec::new(),
+    };
+    fragments(&mut frame, &mut store, root, &mut dirty);
+    assert!(
+        dirty
+            .marked
+            .iter()
+            .any(|(marked, bits)| *marked == node && bits.contains(Dirty::A11Y)),
+        "a box that started clipping its children was answered with a rectangle: {:?}",
+        dirty.marked
+    );
+}

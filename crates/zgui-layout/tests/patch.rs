@@ -145,3 +145,127 @@ fn text_that_empties_out_is_refused_rather_than_approximated() {
     let root = fixture.document.root_index().expect("a root element");
     assert_eq!(retext(&mut store, &fixture.document, root), Retext::Rebuild);
 }
+
+/// A font that moved keeps every box: what changes is what the text is shaped into, and that
+/// is thrown away and shaped again where the boxes stand.
+///
+/// The names are half the assertion, as above. The other half is the cold twin: a tree built
+/// from scratch at the new size lays its lines out exactly where the patched tree does.
+#[test]
+fn changing_the_font_size_keeps_every_box_and_shapes_the_new_size() {
+    let mut fixture = Fixture::new(
+        Element::new("root").children(vec![
+            Element::new("para").text("alpha bravo delta gamma kappa sigma omega alpha bravo"),
+        ]),
+        "root { display: block; width: 200px; font-size: 16px }
+         para { display: block }",
+    );
+    let mut store = fixture.box_tree();
+    let mut content = measurer();
+    lay_out(&mut store, &mut content, 400.0, 400.0);
+
+    let before = names(&store);
+    let first_line = lines(&store)[0].clone();
+    let shapes_before = content.shaper().shapes;
+
+    let root = fixture.root;
+    fixture.edit_restyle_and_patch(&mut store, |edit| {
+        edit.set_style_property(root, "font-size", Some("24px"));
+    });
+    let root_index = fixture.document.root_index().expect("a root element");
+    assert_eq!(
+        retext(&mut store, &fixture.document, root_index),
+        Retext::Patched(0),
+        "a font that moved is not a box that has to be built again"
+    );
+    assert_eq!(
+        names(&store),
+        before,
+        "the patch replaced boxes instead of keeping them, so every downstream name is new"
+    );
+
+    lay_out(&mut store, &mut content, 400.0, 400.0);
+    assert!(
+        content.shaper().shapes > shapes_before,
+        "the text was never shaped at the new size: the context is still holding the form it \
+         was flattened into at the old one"
+    );
+    let after = lines(&store)[0].clone();
+    assert!(
+        after.text.end < first_line.text.end,
+        "the first line still holds {:?} of the string, which is the old size's break",
+        after.text
+    );
+
+    let mut twin = fixture.box_tree();
+    let mut twin_content = measurer();
+    lay_out(&mut twin, &mut twin_content, 400.0, 400.0);
+    let placed = |store: &LayoutStore| {
+        lines(store)
+            .iter()
+            .map(|line| (line.text.clone(), line.top, line.width, line.offset))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        placed(&store),
+        placed(&twin),
+        "the patched tree lays its lines out somewhere a tree built at the new size does not"
+    );
+}
+
+/// Nine hundred rows mounted at once under a list are one container's splice, not a rebuild.
+///
+/// The rows that were there keep their boxes and everything named by them; what is built is the
+/// rows that arrived.
+#[test]
+fn mounting_many_rows_under_one_container_splices_it_and_keeps_the_rest() {
+    const KEPT: usize = 100;
+    const BORN: usize = 900;
+    let rows: Vec<Element> = (0..KEPT)
+        .map(|_| Element::new("row").children(vec![Element::new("cell").text("alpha")]))
+        .collect();
+    let mut fixture = Fixture::new(
+        Element::new("root").children(vec![Element::new("column").children(rows)]),
+        "root { display: block; width: 300px }
+         column { display: flex; flex-direction: column }
+         row { display: flex; height: 20px; flex-shrink: 0 }
+         cell { display: block; width: 100px; overflow: hidden }",
+    );
+    let mut store = fixture.box_tree();
+    let mut content = measurer();
+    lay_out(&mut store, &mut content, 300.0, 2_000.0);
+    // The first cascade's own obligations are what a frame retires when it builds the tree.
+    let root = fixture.document.root_index().expect("a root element");
+    let _ = zgui_layout::boxtree::retire(&mut fixture.document, root);
+    let before = names(&store);
+
+    let column = {
+        let store = fixture.document.store();
+        store.core(fixture.root).first_child().expect("the column")
+    };
+    fixture.edit_and_restyle(|edit| {
+        for _ in 0..BORN {
+            let row = edit.create_element(zgui_interned::ElementName::new("row"));
+            let cell = edit.create_element(zgui_interned::ElementName::new("cell"));
+            let text = edit.create_text("bravo");
+            edit.insert_before(cell, text, None);
+            edit.insert_before(row, cell, None);
+            edit.insert_before(column, row, None);
+        }
+    });
+    let root = fixture.document.root_index().expect("a root element");
+    let owed = zgui_layout::boxtree::retire(&mut fixture.document, root);
+    let spliced = zgui_layout::boxtree::patch::rebuild(&mut store, &fixture.document, &owed);
+    assert!(
+        spliced.is_some(),
+        "{} marks under one container fell back to building the whole tree",
+        owed.len()
+    );
+    let after = names(&store);
+    assert!(
+        before.iter().all(|key| after.contains(key)),
+        "a row that was there lost its boxes to the rows that arrived"
+    );
+    // A row, its cell, the cell's inline root and the run of text: four boxes per row.
+    assert_eq!(after.len(), before.len() + BORN * 4);
+}

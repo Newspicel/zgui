@@ -20,6 +20,11 @@ pub(crate) struct RuleRefs {
     /// A declarer builds its map from the parent's and its own declarations, so a moved parent
     /// map is a moved map of its own however its declarations read; it cascades again.
     pub(crate) declares: bool,
+    /// The Bloom set of `reads`, or every name for a declarer.
+    ///
+    /// What the document's readers column files for the element, so that a change tests a whole
+    /// subtree with one `and`. See [`zgui_dom::side::readers`].
+    pub(crate) bloom: u64,
 }
 
 impl RuleRefs {
@@ -61,6 +66,13 @@ pub(crate) fn refs_of(rules: &StrongRuleNode, guards: &StylesheetGuards<'_>) -> 
     }
     refs.reads.sort_unstable();
     refs.reads.dedup();
+    refs.bloom = if refs.declares {
+        zgui_dom::side::readers::ALL
+    } else {
+        refs.reads.iter().fold(0, |bits, name| {
+            bits | zgui_dom::side::readers::name_bits(name)
+        })
+    };
     refs
 }
 

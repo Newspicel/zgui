@@ -154,11 +154,23 @@ pub(crate) struct TextSlot {
 /// still an element that moved off its old cascade result, so leaving it out of the count would
 /// make a theme flip in which any single element's colour is unchanged look like a document-wide
 /// split.
+/// What one batch of paint updates did to the slots.
+pub(crate) struct Applied {
+    /// The elements whose text has to be shaped again under a slot of their own.
+    pub(crate) split: Vec<SlotKey>,
+    /// Whether any update was drawn in a colour its slot did not hold.
+    ///
+    /// False for a batch in which every element moved to a new cascade result of the same
+    /// colour — a font change, a theme flip that left the text colour alone — which then rewrites
+    /// no brush and owes the display list no copy of the table.
+    pub(crate) recoloured: bool,
+}
+
 pub(crate) fn apply(
     slots: &mut TextSlots,
     table: &mut TextPaintTable,
     updates: &[TextPaintUpdate],
-) -> Vec<SlotKey> {
+) -> Applied {
     // Whether each update is drawn in a colour the slot it is already using does not hold. Taken
     // before anything is written, because the loop below rewrites slots and a comparison made
     // half way through it would be a comparison against this batch's own work.
@@ -202,6 +214,7 @@ pub(crate) fn apply(
         .map(|slot| (*slot, slots.owners_of(*slot)))
         .collect();
 
+    let recoloured_any = recoloured.iter().any(|moved| *moved);
     let mut split = Vec::new();
     for (update, moved) in updates.iter().zip(&recoloured) {
         let paint = TextPaint::new(update.paint.color);
@@ -245,7 +258,10 @@ pub(crate) fn apply(
         let previous = slots.insert((update.node, update.run), TextSlot { slot, key });
         retire(table, slots, previous, claimed);
     }
-    split
+    Applied {
+        split,
+        recoloured: recoloured_any,
+    }
 }
 
 /// Points a cascade result at `slot`, unless it already resolves to one of its own.
@@ -390,7 +406,8 @@ mod tests {
             &mut slots,
             &mut table,
             &[update(1, grey(0.8)), update(2, grey(0.4))],
-        );
+        )
+        .split;
 
         assert_eq!(
             drawn(&slots, &table, 1),
@@ -505,7 +522,7 @@ mod tests {
                 restyled: true,
             })
             .collect();
-        let split = apply(&mut slots, &mut table, &updates);
+        let split = apply(&mut slots, &mut table, &updates).split;
 
         assert_eq!(
             table.get(slot),
@@ -537,7 +554,8 @@ mod tests {
             &mut slots,
             &mut table,
             &[update(1, grey(0.9)), update(2, grey(0.9))],
-        );
+        )
+        .split;
 
         assert!(
             split.is_empty(),

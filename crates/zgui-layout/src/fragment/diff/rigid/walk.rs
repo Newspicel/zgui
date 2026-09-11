@@ -284,7 +284,15 @@ impl<'a, 'b, D: FrameDirty> Walk<'a, 'b, D> {
     /// would be a walk to every ancestor of every moved box to raise obligations the next few lines
     /// clear again.
     fn note_move(&mut self, key: BoxKey) -> bool {
-        let Some(node) = self.store.get(key).and_then(|record| record.source) else {
+        let Some(record) = self.store.get(key) else {
+            return false;
+        };
+        // A run of text comes from a text node, which is no accessibility node: what an
+        // assistive technology holds for it is its element's, and that element is above.
+        if record.kind == crate::node::kind::BoxKind::TextRun {
+            return false;
+        }
+        let Some(node) = record.source else {
             return false;
         };
         self.dirty.moved(Some(node));

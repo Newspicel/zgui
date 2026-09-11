@@ -16,6 +16,9 @@ license.workspace = true
 zgui-bits = { path = "../zgui-bits", version = "0.1.0" }
 zgui-dom = { path = "../zgui-dom", version = "0.1.0" }
 zgui-geom = { path = "../zgui-geom", version = "0.1.0" }
+# The counters a budget test reads: how many nodes were projected whole and how many were
+# answered with their rectangle alone.
+zgui-profile = { path = "../zgui-profile", version = "0.1.0" }
 # Which node an assistive technology may put focus on is the same question the tab key asks, and
 # two answers to it would be two tab orders.
 zgui-input = { path = "../zgui-input", version = "0.1.0" }

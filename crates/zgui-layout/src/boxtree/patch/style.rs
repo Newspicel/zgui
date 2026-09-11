@@ -30,7 +30,7 @@ use zgui_dom::side::BoxKey;
 use zgui_dom::{Document, NodeIndex, NodeKind};
 
 use crate::boxtree::anonymous::synthesised_style;
-use crate::node::box_node::BoxNode;
+
 use crate::node::kind::{BoxKind, PseudoKind};
 use crate::tree::dirty::mark_dirty;
 use crate::tree::store::LayoutStore;
@@ -58,9 +58,14 @@ use crate::tree::store::LayoutStore;
 ///
 /// Only such an element: a hover that moves a colour rewrites styles too, and invalidating the path
 /// to the root for it would relayout the document for a change that moves nothing.
-pub fn restyle(store: &mut LayoutStore, document: &Document, nodes: &[NodeIndex]) -> u32 {
+pub fn restyle(
+    store: &mut LayoutStore,
+    document: &Document,
+    nodes: impl IntoIterator<Item = NodeIndex>,
+) -> u32 {
     let mut moved = 0;
-    for &index in nodes {
+    let mut scratch = Scratch::default();
+    for index in nodes {
         let Some(core) = document.store().try_core(index) else {
             continue;
         };
@@ -89,10 +94,20 @@ pub fn restyle(store: &mut LayoutStore, document: &Document, nodes: &[NodeIndex]
                 continue;
             };
             moved += write(store, key, &owned, relayout);
-            moved += descend(store, key, &owned, relayout);
+            moved += descend(store, key, &owned, relayout, &mut scratch);
         }
     }
     moved
+}
+
+/// The buffers one descent borrows, kept across elements so a document-wide restyle allocates
+/// them once.
+#[derive(Default)]
+struct Scratch {
+    /// The boxes still to descend from.
+    stack: Vec<BoxKey>,
+    /// The boxes already reached.
+    seen: rustc_hash::FxHashSet<BoxKey>,
 }
 
 /// Writes `style` onto one box, and reports whether that changed anything.
@@ -131,17 +146,34 @@ fn write(store: &mut LayoutStore, key: BoxKey, style: &ComputedStyle, relayout: 
 /// so it holds the style the painter tints those glyphs with: left at the one it was built with,
 /// a label keeps the colour it had when the button was first drawn, whatever the cascade has done
 /// to it since.
-fn descend(store: &mut LayoutStore, key: BoxKey, owner: &ComputedStyle, relayout: bool) -> u32 {
+fn descend(
+    store: &mut LayoutStore,
+    key: BoxKey,
+    owner: &ComputedStyle,
+    relayout: bool,
+    scratch: &mut Scratch,
+) -> u32 {
     let mut moved = 0;
-    let mut stack = vec![key];
-    let mut seen: rustc_hash::FxHashSet<BoxKey> = rustc_hash::FxHashSet::default();
+    let Scratch { stack, seen } = scratch;
+    stack.clear();
+    seen.clear();
+    stack.push(key);
     let mut synthesised = None;
     while let Some(current) = stack.pop() {
         let Some(node) = store.get(current) else {
             continue;
         };
-        let children = children_of(node);
-        for child in children {
+        // Both orders, each box once: `seen` is what dedupes them, so no list is built first.
+        let count = node.children.len() + node.paint_children.len();
+        for position in 0..count {
+            let Some(node) = store.get(current) else {
+                break;
+            };
+            let child = if position < node.children.len() {
+                node.children[position]
+            } else {
+                node.paint_children[position - node.children.len()]
+            };
             if !seen.insert(child) {
                 continue;
             }
@@ -161,20 +193,6 @@ fn descend(store: &mut LayoutStore, key: BoxKey, owner: &ComputedStyle, relayout
     moved
 }
 
-/// One box's children in both orders, each named once.
-///
-/// The two orders are different sets and not merely different sequences, so the union is what
-/// "every box below this one" means here.
-fn children_of(node: &BoxNode) -> Vec<BoxKey> {
-    let mut children = node.children.clone();
-    for key in &node.paint_children {
-        if !children.contains(key) {
-            children.push(*key);
-        }
-    }
-    children
-}
-
 #[cfg(test)]
 mod tests {
     use zgui_arena::DocumentId;
@@ -186,7 +204,7 @@ mod tests {
     use crate::style::same_cascade as same;
     use crate::tree::store::LayoutStore;
 
-    use super::{descend, write};
+    use super::{Scratch, descend, write};
 
     /// A box of the given kind under `parent`, in both child orders.
     fn insert(store: &mut LayoutStore, parent: Option<BoxKey>, kind: BoxKind) -> BoxKey {
@@ -281,7 +299,10 @@ mod tests {
 
         let owner = StyleDraft::initial().build();
         let before = store.node(nested_run).style.clone();
-        assert_eq!(descend(&mut store, element, &owner, false), 2);
+        assert_eq!(
+            descend(&mut store, element, &owner, false, &mut Scratch::default()),
+            2
+        );
 
         let wrapper_style = store.node(wrapper).style.clone();
         assert!(
@@ -315,7 +336,10 @@ mod tests {
 
         let stale = store.node(root).style.clone();
         let owner = StyleDraft::initial().build();
-        assert_eq!(descend(&mut store, element, &owner, false), 2);
+        assert_eq!(
+            descend(&mut store, element, &owner, false, &mut Scratch::default()),
+            2
+        );
         assert!(
             !same(&stale, &store.node(root).style),
             "the box that generates the line fragments kept the style it was built with, so the \

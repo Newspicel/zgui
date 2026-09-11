@@ -168,7 +168,7 @@ impl Fixture {
             .edit(&filter, body)
             .expect("the document is not poisoned");
         let pass = self.engine.restyle(&mut self.document, None);
-        zgui_layout::boxtree::patch::style::restyle(store, &self.document, &pass.styled_nodes());
+        zgui_layout::boxtree::patch::style::restyle(store, &self.document, pass.styled_nodes());
         result
     }
 
@@ -195,7 +195,7 @@ impl Fixture {
         {
             zgui_layout::boxtree::build(store, &self.document);
         }
-        zgui_layout::boxtree::patch::style::restyle(store, &self.document, &pass.styled_nodes());
+        zgui_layout::boxtree::patch::style::restyle(store, &self.document, pass.styled_nodes());
         if zgui_layout::boxtree::patch::retext(store, &self.document, root)
             == zgui_layout::boxtree::patch::Retext::Rebuild
         {

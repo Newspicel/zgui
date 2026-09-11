@@ -76,6 +76,11 @@ impl StyleEngine {
         if !self.needs_restyle(document) {
             return Restyle::default();
         }
+        // The readers column answers which subtrees a custom-property change has to visit, and
+        // it is asked during the traversal: whatever an edit or the last pass left stale is
+        // recomputed first.
+        let from = document.document_index();
+        zgui_dom::side::readers::settle(document.store_mut(), from);
 
         let snapshots = crate::driver::snapshots::RestyleSnapshots::take(document);
         let mut report = Restyle {
@@ -196,6 +201,10 @@ impl StyleEngine {
         sink: &mut DamageSink,
     ) {
         for record in records {
+            // Filed before anything else can skip the record: an element that stopped existing
+            // between the traversal and here has no style to translate, and its readers are
+            // dropped with its columns.
+            zgui_dom::side::readers::set_own(document.store_mut(), record.index, record.readers);
             let Some(style) = document.node(record.index).primary_style() else {
                 continue;
             };

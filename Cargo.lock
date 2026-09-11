@@ -5647,6 +5647,7 @@ dependencies = [
  "zgui-input",
  "zgui-interned",
  "zgui-layout",
+ "zgui-profile",
  "zgui-scene",
  "zgui-vocab",
 ]

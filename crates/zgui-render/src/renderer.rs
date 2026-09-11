@@ -163,4 +163,13 @@ pub trait Renderer {
     fn as_any_mut(&mut self) -> Option<&mut dyn core::any::Any> {
         None
     }
+
+    /// The shared form of [`Renderer::as_any_mut`], for a caller that only reads.
+    ///
+    /// A harness that reads the presented texture back between frames reaches its own
+    /// renderer through [`Window::renderer`](https://docs.rs/zgui) with this. The same rule
+    /// applies: a wrapper forwards it, or answers with itself when it is the type being asked for.
+    fn as_any(&self) -> Option<&dyn core::any::Any> {
+        None
+    }
 }

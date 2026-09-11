@@ -23,6 +23,7 @@ pub mod observed;
 pub mod paint_key;
 pub mod place;
 pub mod props;
+pub mod readers;
 pub mod semantics;
 pub mod surface;
 

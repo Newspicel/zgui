@@ -201,6 +201,7 @@ fn traversal_start<'doc>(document: &'doc Document, root: Node<'doc>) -> Node<'do
         let (own, _) = record.dirty().get();
         if own.intersects(zgui_dom::stylo::flags::STYLE_WORK)
             || current.has_snapshot()
+            || current.has_custom_map_changed()
             || current
                 .borrow_data()
                 .is_none_or(|data| !data.has_styles() || !data.hint.is_empty())

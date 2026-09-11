@@ -19,10 +19,12 @@ const MOST: usize = 64;
 
 /// How many raw marks are worth collapsing at all.
 ///
-/// The collapse itself is a hash insert per mark, so it is cheap — but a frame that marked half
-/// the document is not a local change whatever it collapses to, and the whole-tree build answers
-/// it without the collection pass.
-const RAW_MOST: usize = 4_096;
+/// The collapse is a hash insert per mark, and what it collapses *to* is what the splices cost:
+/// a thousand rows mounted under one list are a thousand marks, and one container. Building the
+/// whole tree for them would also replace every box the list kept, and with them every fragment,
+/// every recorded painting and every hit entry of the whole document — so the raw count is only a
+/// guard against collapsing a frame that marked more elements than a document is likely to hold.
+const RAW_MOST: usize = 1 << 16;
 
 /// The elements whose boxes are rebuilt to service `owed`, outermost only.
 ///

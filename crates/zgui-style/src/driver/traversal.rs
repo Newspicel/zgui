@@ -65,6 +65,8 @@ pub struct Restyled {
     /// A pseudo-element has no node of its own, so it has no row in any per-node table: without
     /// these, a rule that changes only the colour of generated content produces no damage at all.
     pub pseudos: [usize; 2],
+    /// The custom properties the element's rule chains read, as the readers column files them.
+    pub readers: u64,
 }
 
 /// No custom paint sources.
@@ -169,6 +171,30 @@ impl<'a> RecalcStyle<'a> {
             .insert(node, names);
     }
 
+    /// The custom properties the element's rule chains read, filed for the readers column.
+    ///
+    /// The primary chain and every generated-content chain, and every name when the element
+    /// declares custom properties or holds an effect that reads them by any name. An element
+    /// with no rules reads nothing.
+    fn readers_of(&self, data: &ElementData) -> u64 {
+        let Some(primary) = data.styles.get_primary() else {
+            return zgui_dom::side::readers::ALL;
+        };
+        if super::recalc::declares_any(primary, &self.wildcard_names) {
+            return zgui_dom::side::readers::ALL;
+        }
+        let pseudos = data
+            .styles
+            .pseudos
+            .as_optional_array()
+            .into_iter()
+            .flat_map(|array| array.iter().flatten());
+        core::iter::once(primary)
+            .chain(pseudos)
+            .filter_map(|style| style.rules.as_ref())
+            .fold(0, |bits, rules| bits | self.refs_of(rules).bloom)
+    }
+
     /// What the rule chain ending at `rules` reads and declares, computed once per chain.
     pub(super) fn refs_of(&self, rules: &StrongRuleNode) -> Arc<RuleRefs> {
         let mut hasher = FxHasher::default();
@@ -254,6 +280,7 @@ impl<'doc> DomTraversal<Node<'doc>> for RecalcStyle<'_> {
                 pseudo_identity(&data, &PseudoElement::Before),
                 pseudo_identity(&data, &PseudoElement::After),
             ],
+            readers: self.readers_of(&data),
         });
 
         // The engine's descent flag is not cleared here, because this document does not store one:
@@ -272,21 +299,7 @@ impl<'doc> DomTraversal<Node<'doc>> for RecalcStyle<'_> {
         if !traversal_flags.for_animation_only() && el.has_custom_map_changed() {
             return true;
         }
-        let data = match data {
-            Some(d) if d.has_styles() => d,
-            _ => return true,
-        };
-        if traversal_flags.for_animation_only() {
-            return el.has_animation_only_dirty_descendants()
-                || data.hint.has_animation_hint_or_recascade();
-        }
-        if el.has_dirty_descendants() {
-            return true;
-        }
-        if !data.hint.is_empty() {
-            return true;
-        }
-        !data.damage.is_empty()
+        engine_needs_traversal(el, traversal_flags, data)
     }
 
     /// The post-order pass exists to build the engine's own flow tree, which is not the tree this
@@ -310,4 +323,31 @@ fn pseudo_identity(data: &style::data::ElementData, pseudo: &PseudoElement) -> u
         .pseudos
         .get(pseudo)
         .map_or(0, |style| style.heap_ptr() as usize)
+}
+
+/// The engine's own reasons to visit an element: no styles yet, work below it, a hint, or damage.
+///
+/// The document's one further reason — the inherited custom property map moved — is tested apart
+/// from these by [`RecalcStyle::element_needs_traversal`], so that a caller which has already
+/// decided the map alone does not warrant a visit can ask for the engine's answer on its own.
+pub(super) fn engine_needs_traversal(
+    el: Node<'_>,
+    traversal_flags: TraversalFlags,
+    data: Option<&ElementData>,
+) -> bool {
+    let data = match data {
+        Some(d) if d.has_styles() => d,
+        _ => return true,
+    };
+    if traversal_flags.for_animation_only() {
+        return el.has_animation_only_dirty_descendants()
+            || data.hint.has_animation_hint_or_recascade();
+    }
+    if el.has_dirty_descendants() {
+        return true;
+    }
+    if !data.hint.is_empty() {
+        return true;
+    }
+    !data.damage.is_empty()
 }

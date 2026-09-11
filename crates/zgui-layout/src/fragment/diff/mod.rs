@@ -1170,8 +1170,11 @@ impl<D: FrameDirty> Pass<'_, '_, D> {
                 // a move makes: a widget that moved owes a rectangle, and deriving its role,
                 // its name and its child list again to answer that is what makes a relayout of
                 // a long list cost a projection of every row.
+                // Reported under the element the piece carries semantics for, not under the box's
+                // own source: a run of text is owed by its text node, and a text node is no
+                // accessibility node at all.
                 if self.dirty.is_semantic(node) {
-                    self.dirty.moved(owed.node);
+                    self.dirty.moved(node);
                 }
                 if let Some(previous) = &previous {
                     self.damage_beyond_a_move(previous.ink, Admitted::everything());
@@ -1180,8 +1183,27 @@ impl<D: FrameDirty> Pass<'_, '_, D> {
                 self.touch_hit(frag, change, false);
             }
             Change::Changed => {
+                // A piece whose size moved and nothing else — the note cell that widened, the
+                // row that grew — owes the accessibility tree its rectangle, which is the same
+                // claim a carried piece makes; deriving the node's role, name, relations and
+                // child list again to answer it is what made a relayout cost a projection per
+                // element. A piece that appeared, changed what it paints or whether it clips
+                // keeps the whole projection.
+                // A line is one of a box's pieces, not the box: it is born again whenever its
+                // paragraph is shaped again, and a node whose lines were shaped again owes the
+                // tree no more than a node whose box grew.
+                let resized = matches!(kind, FragmentKind::Line { .. })
+                    || previous.as_ref().is_some_and(|previous| {
+                        previous.kind == kind && geometry::only_geometry_differs(previous, next)
+                    });
+                let a11y = if resized && self.dirty.is_semantic(node) {
+                    self.dirty.moved(node);
+                    Dirty::empty()
+                } else {
+                    self.a11y(node)
+                };
                 self.dirty
-                    .mark(owed.node, Dirty::REPAINT | Dirty::REHIT | self.a11y(node));
+                    .mark(owed.node, Dirty::REPAINT | Dirty::REHIT | a11y);
                 // A paintless box that moved rigidly, or stood still while its inner boxes
                 // repositioned, owes the frame no damage of its own. Repaint marks do not hold
                 // it back: a repaint of nothing is nothing, and a style that *starts* painting

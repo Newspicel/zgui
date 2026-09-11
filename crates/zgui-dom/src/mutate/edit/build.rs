@@ -122,6 +122,8 @@ impl Edit<'_> {
         }
 
         ancestors::mark(store, parent, Dirty::CHILDREN);
+        // The parent's readers union may have grown by what the child's subtree reads.
+        crate::side::readers::mark_stale(store, parent);
         if moved && old_parent == Some(parent) {
             // A node that moved among its own siblings is the same accessibility node it was,
             // with the same children below it; what changed is the parent's child list, and where
@@ -203,6 +205,8 @@ impl Edit<'_> {
             batch.structure.record_emptiness_change(store, parent);
         }
         let was_root = is_document_child(store, node);
+        // The parent's readers union may have shrunk by what the subtree read.
+        crate::side::readers::mark_stale(store, parent);
 
         links::unlink(store, node);
         set_flag(store, node, NodeFlags::IN_DOCUMENT, false);

@@ -40,6 +40,24 @@ pub(crate) struct ChangedNames {
     /// Also set when a name the framework reads on the element's behalf moved — a fill, a stroke,
     /// a shader parameter — since no declaration of the element mentions those.
     pub(crate) wildcard: bool,
+    /// The Bloom set of `names`, or every name when the change is a wildcard.
+    pub(crate) bloom: u64,
+}
+
+impl ChangedNames {
+    /// A change too wide to name.
+    fn wildcard() -> Self {
+        Self {
+            names: Vec::new(),
+            wildcard: true,
+            bloom: zgui_dom::side::readers::ALL,
+        }
+    }
+
+    /// Whether a subtree whose readers union is `below` can hold a reader of this change.
+    fn reaches(&self, below: u64) -> bool {
+        self.wildcard || below & self.bloom != 0
+    }
 }
 
 /// How many names a change may carry before every descendant is treated as a reader.
@@ -64,7 +82,18 @@ impl ChangedNames {
         }
         let wildcard = names.len() > NAMED_AT_MOST
             || names.iter().any(|name| name.starts_with(FRAMEWORK_PREFIX));
-        Self { names, wildcard }
+        let bloom = if wildcard {
+            zgui_dom::side::readers::ALL
+        } else {
+            names.iter().fold(0, |bits, name| {
+                bits | zgui_dom::side::readers::name_bits(name)
+            })
+        };
+        Self {
+            names,
+            wildcard,
+            bloom,
+        }
     }
 }
 
@@ -102,17 +131,30 @@ pub(super) fn recalc_style_at<'doc, F>(
         && data.restyle_kind(context.shared).is_none()
         && let Some(parent_style) = parent_style(element)
     {
-        // The names come from the parent's visit this frame. Without them everything below
-        // counts as a reader, which is the answer the engine gives to every change.
+        // The names come from the parent's visit this frame. Without them — a subtree the
+        // change skipped because nothing in it read the names, entered on a later frame for a
+        // reason of its own — they are read off the two maps themselves.
         let names = TElement::traversal_parent(&element)
             .and_then(|parent| traversal.changed_names_of(parent.index()))
             .unwrap_or_else(|| {
-                Arc::new(ChangedNames {
-                    names: Vec::new(),
-                    wildcard: true,
-                })
+                data.styles.get_primary().map_or_else(
+                    || Arc::new(ChangedNames::wildcard()),
+                    |old| {
+                        Arc::new(ChangedNames::between(
+                            &old.custom_properties().inherited,
+                            &parent_style.custom_properties().inherited,
+                        ))
+                    },
+                )
             });
-        if reads_custom_properties(traversal, data, &names) {
+        if names.names.is_empty() && !names.wildcard {
+            // Equal maps under different identities: the element takes the parent's and its
+            // children keep theirs, which hold the same values.
+            if let Some(old) = data.styles.get_primary() {
+                data.styles.primary = Some(with_inherited_map(old, &parent_style));
+                counter::bump(Counter::CustomMapsRefreshed);
+            }
+        } else if reads_custom_properties(traversal, data, &names) {
             data.hint.insert(RestyleHint::RECASCADE_SELF);
         } else if let Some(old) = data.styles.get_primary() {
             data.styles.primary = Some(with_inherited_map(old, &parent_style));
@@ -175,7 +217,7 @@ pub(super) fn recalc_style_at<'doc, F>(
             data,
             propagated_hint,
             is_initial_style,
-            custom_changed.is_some(),
+            custom_changed.as_deref(),
             note_child,
         );
     }
@@ -230,7 +272,10 @@ fn reads_custom_properties(
 }
 
 /// Whether `style` holds any of `names` in either of its custom property maps.
-fn declares_any(style: &ComputedValues, names: &[style::custom_properties::Name]) -> bool {
+pub(super) fn declares_any(
+    style: &ComputedValues,
+    names: &[style::custom_properties::Name],
+) -> bool {
     let maps = style.custom_properties();
     names
         .iter()
@@ -505,7 +550,7 @@ fn note_children<'doc, F>(
     data: &ElementData,
     propagated_hint: RestyleHint,
     is_initial_style: bool,
-    custom_changed: bool,
+    custom_changed: Option<&ChangedNames>,
     mut note_child: F,
 ) where
     F: FnMut(E<'doc>),
@@ -525,14 +570,33 @@ fn note_children<'doc, F>(
             }
         };
 
-        if custom_changed {
+        // Every child's map moved, and every child is told. Whether the child is *visited* for
+        // it is decided by what its subtree reads: a subtree with no reader of the changed names
+        // keeps the bit and is refreshed the next time something else brings the traversal in.
+        let mut reached = false;
+        if let Some(names) = custom_changed {
             child.note_custom_map_changed();
+            let below = zgui_dom::side::readers::below(child.store(), child.index());
+            reached = names.reaches(below);
         }
         let mut child_data = child.mutate_data();
         let mut child_data = child_data.as_deref_mut();
 
         if let Some(ref mut child_data) = child_data {
             child_data.hint.insert(propagated_hint);
+            // A reset-only change above asks a child to cascade again only if it inherits reset
+            // properties, which is answered off the child's own style right here. Left on the
+            // child, the hint alone is a reason to visit it — and a background moving on every
+            // row of a list visited every cell of every row for a question with a known answer.
+            if child_data.hint.bits() == RestyleHint::RECASCADE_SELF_IF_INHERIT_RESET_STYLE.bits()
+                && child_data.styles.get_primary().is_some_and(|style| {
+                    !style.flags.contains(
+                        style::computed_value_flags::ComputedValueFlags::INHERITS_RESET_STYLE,
+                    )
+                })
+            {
+                child_data.hint = RestyleHint::empty();
+            }
             child_data.invalidate_style_if_needed(
                 child,
                 context.shared,
@@ -546,13 +610,13 @@ fn note_children<'doc, F>(
         // child visited only because its inherited map moved is found through its own bit: noting
         // it below the parent would raise a subtree word the walk never reaches, and every later
         // mark climbing through it would stop there.
-        if <RecalcStyle<'_> as DomTraversal<E<'doc>>>::element_needs_traversal(
-            child,
-            flags,
-            child_data.map(|d| &*d),
-        ) {
+        let engine_needs =
+            super::traversal::engine_needs_traversal(child, flags, child_data.as_deref());
+        if !engine_needs && custom_changed.is_some() && !reached {
+            counter::bump(Counter::CustomSubtreesSkipped);
+        }
+        if engine_needs || reached {
             note_child(child_node);
-            let engine_needs = flags.for_animation_only() || !child.has_custom_map_changed();
             if !is_initial_style && engine_needs {
                 if flags.for_animation_only() {
                     element.note_animation_work_below();

@@ -76,6 +76,8 @@ pub struct Columns {
     pub paint_key: SlotVec<NodeKey, PaintStyleKey>,
     /// Identity of everything this node's accessible description depends on.
     pub a11y_key: SlotVec<NodeKey, A11yKey>,
+    /// Which custom properties this node's rules read, own and below.
+    pub readers: SlotVec<NodeKey, crate::side::readers::Readers>,
 }
 
 impl Columns {
@@ -99,6 +101,7 @@ impl Columns {
             state_mask: PagedVec::for_domain(domain),
             paint_key: SlotVec::for_domain(domain),
             a11y_key: SlotVec::for_domain(domain),
+            readers: SlotVec::for_domain(domain),
         }
     }
 
@@ -140,6 +143,7 @@ impl Columns {
         self.state_mask.clear(key);
         self.paint_key.remove(key);
         self.a11y_key.remove(key);
+        self.readers.remove(key);
     }
 
     /// Drops every sparse page nothing is stored on any more.

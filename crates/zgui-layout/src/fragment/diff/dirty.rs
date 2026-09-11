@@ -35,14 +35,13 @@ pub trait FrameDirty {
         false
     }
 
-    /// Records that `node`'s boxes were carried to a new position and nothing else about it
-    /// changed.
+    /// Records that `node`'s boxes moved or changed size and nothing else about it changed.
     ///
     /// Stated apart from [`FrameDirty::mark`] because it is a strictly smaller claim, and the
-    /// difference is worth something to whoever services it: a node that only moved projects to
-    /// what the consumer already holds with one rectangle replaced, so the answer is to measure it
-    /// again rather than to derive its role, its name, its relations, its actions and its child
-    /// list a second time.
+    /// difference is worth something to whoever services it: a node whose geometry alone moved
+    /// projects to what the consumer already holds with one rectangle replaced, so the answer is
+    /// to measure it again rather than to derive its role, its name, its relations, its actions
+    /// and its child list a second time.
     ///
     /// The default answers it as an ordinary accessibility obligation, which is always correct and
     /// never cheaper.

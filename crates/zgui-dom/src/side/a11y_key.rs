@@ -1,10 +1,10 @@
 //! The identity of everything a node's accessible description depends on.
 //!
-//! The same idea as the paint key one level over, with one extra part. A style key can be a set of
-//! addresses because computed values are shared and immutable. An accessible name is not: editing a
-//! text node changes what a screen reader would say without changing any style group and without
-//! changing any semantics record, so identity alone would report "nothing changed" for the one
-//! change a user would most notice. Hence the content hash.
+//! The same idea as the paint key one level over. A style key can be a set of addresses because
+//! computed values are shared and immutable. An accessible name is not: editing a text node
+//! changes what a screen reader would say without changing any style group and without changing
+//! any semantics record — which is why the edit itself marks the element for the accessibility
+//! phase, and the key does not have to see it.
 
 /// Identity of what a node's accessible description is derived from.
 ///
@@ -12,15 +12,17 @@
 /// whether the accessibility projection has to be rebuilt for this node.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Default, Debug)]
 pub struct A11yKey {
-    /// The group of computed values the projection reads — visibility, direction, and the rest of
-    /// what decides whether a node is exposed at all.
+    /// Reserved for the identity of a computed-value group the projection reads.
+    ///
+    /// The projection reads none: whether a node is exposed is answered from its fragments and
+    /// its text order from the document. The field stays zero.
     pub style: usize,
     /// The node's semantics record, or zero when it has none.
     pub semantics: usize,
-    /// A hash of the text the projection would read out.
+    /// Reserved for a hash of the text the projection would read out.
     ///
-    /// The one part that is a hash rather than an address, because text is edited in place: without
-    /// it, retyping a label changes what is announced and nothing observes that it did.
+    /// Text is edited in place, and the edit marks the element for the accessibility phase
+    /// itself, so the key no longer carries the hash; the field stays zero.
     pub content: u64,
 }
 

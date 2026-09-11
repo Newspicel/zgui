@@ -307,6 +307,7 @@ impl A11yBuilder {
             // Gone since the move was recorded, and already retired along with everything below it.
             return;
         }
+        zgui_profile::counter::bump(zgui_profile::Counter::A11yRemeasured);
         let geometry = project::geometry::measure(world, key);
         let sent = self.held.remeasure(key, &geometry);
         self.file_by_space(world, key);
@@ -336,6 +337,7 @@ impl A11yBuilder {
             // Gone, and already retired along with everything below it.
             return;
         };
+        zgui_profile::counter::bump(zgui_profile::Counter::A11yProjected);
         let changed = self.held.record(key, &projected);
         self.file_by_space(world, key);
         if changed {

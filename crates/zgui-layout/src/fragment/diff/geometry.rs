@@ -89,6 +89,19 @@ fn moved_alike(
         && ink_is.origin.y.0 - ink_was.origin.y.0 == border_is.origin.y.0 - border_was.origin.y.0
 }
 
+/// Whether a fragment and the geometry replacing it differ in nothing an accessibility node
+/// derives from a fragment except where it is and how large it is.
+///
+/// The projection reads a fragment's rectangle, its coordinate system and whether it clips its
+/// children; everything else it states comes from the document. What a line holds and where it is
+/// cut are painting, and a name is read off the text node rather than off the glyphs, so a piece
+/// whose text was shaped again owes the tree its rectangle and nothing more.
+pub(super) fn only_geometry_differs(previous: &Fragment, next: &Geometry) -> bool {
+    previous.flags.contains(FragmentFlags::CLIPS_CHILDREN)
+        == next.flags.contains(FragmentFlags::CLIPS_CHILDREN)
+        && previous.transform == next.transform
+}
+
 /// What changed between a fragment and the geometry that replaces it.
 pub(super) fn compare(previous: &Fragment, next: &Geometry) -> Change {
     let same_shape = previous.border_box.size == next.border_box.size
