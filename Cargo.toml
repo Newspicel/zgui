@@ -28,26 +28,15 @@ app_units = "0.7.8"
 euclid = "0.22.14"
 
 # --- layout: named only by zgui-layout ----------------------------------------------------
-# The feature set is pinned explicitly and `default-features` is off: we own the tree, so
-# `taffy_tree` is unwanted, while losing `content_size` would silently zero every intrinsic
-# size and losing `float_layout` would silently delete floats. `std` is not optional in
-# practice: taffy 0.12.2's `detailed_layout_info` names `Box` through the std prelude, so the
-# crate does not compile without it.
-#
-# The vendored copy is named by path rather than through `[patch.crates-io]`, because a patch
-# section only takes effect in the root manifest of whatever workspace is building: a project
-# depending on zgui by path would compile zgui-layout against the unpatched release — which,
-# now that the local changes extend a trait zgui-layout implements, does not compile at all,
-# and before that silently dropped the layout fixes. See vendor/README.md for the changes.
-taffy = { path = "vendor/taffy", default-features = false, features = [
-    "std",
-    "flexbox",
+# A retained, incremental engine written against a host-owned tree, vendored by path so that a
+# crate depending on zgui by path compiles zgui-layout against the patched copy (see
+# vendor/README.md for the changes). `parallel` is off because the workspace drives its own layout
+# pool through the engine's batching seam; `block`, `flex` and `grid` are the three algorithms the
+# box tree dispatches to.
+cephal = { path = "vendor/cephal", default-features = false, features = [
+    "block",
+    "flex",
     "grid",
-    "block_layout",
-    "float_layout",
-    "content_size",
-    "calc",
-    "detailed_layout_info",
 ] }
 
 # --- text: named only by zgui-text-parley --------------------------------------------------

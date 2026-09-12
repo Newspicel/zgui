@@ -33,10 +33,10 @@ pub struct Snapped {
 /// the layout algorithms report it — together with the absolute edges it was derived from, which is
 /// what the box's own children are then snapped against.
 pub fn place(
-    unrounded: taffy::Layout,
+    unrounded: cephal::Layout,
     parent_layout: (f32, f32),
     parent_rounded: (f32, f32),
-) -> (taffy::Layout, Snapped) {
+) -> (cephal::Layout, Snapped) {
     let x = parent_layout.0 + unrounded.location.x;
     let y = parent_layout.1 + unrounded.location.y;
     let absolute = Snapped {
@@ -53,8 +53,19 @@ pub fn place(
     snapped.size.height = absolute.bottom - absolute.top;
     snapped.border = round_edges(unrounded.border);
     snapped.padding = round_edges(unrounded.padding);
-    snapped.content_size.width = (x + unrounded.content_size.width).round() - absolute.left;
-    snapped.content_size.height = (y + unrounded.content_size.height).round() - absolute.top;
+    // The overflow rectangle is measured from the padding-box corner; its edges snap in absolute
+    // space like everything else, so a content size derived from it lands on the pixel grid.
+    let overflow = unrounded.scrollable_overflow_rect;
+    let padding_x = x + unrounded.border.left;
+    let padding_y = y + unrounded.border.top;
+    let snapped_padding_x = absolute.left + snapped.border.left;
+    let snapped_padding_y = absolute.top + snapped.border.top;
+    snapped.scrollable_overflow_rect = cephal::Rect {
+        left: (padding_x + overflow.left).round() - snapped_padding_x,
+        right: (padding_x + overflow.right).round() - snapped_padding_x,
+        top: (padding_y + overflow.top).round() - snapped_padding_y,
+        bottom: (padding_y + overflow.bottom).round() - snapped_padding_y,
+    };
     (snapped, absolute)
 }
 
@@ -83,7 +94,7 @@ pub fn seed(store: &crate::tree::store::LayoutStore, key: zgui_dom::side::BoxKey
 ///
 /// Rounding them independently is right because each is measured from an edge that has itself been
 /// rounded, so a rounded inset from a rounded edge lands on the grid.
-pub fn edges(rect: taffy::Rect<f32>) -> Edges<DevicePx> {
+pub fn edges(rect: cephal::Rect<f32>) -> Edges<DevicePx> {
     Edges {
         top: DevicePx(rect.top.round()),
         right: DevicePx(rect.right.round()),
@@ -93,8 +104,8 @@ pub fn edges(rect: taffy::Rect<f32>) -> Edges<DevicePx> {
 }
 
 /// Rounds four insets, in the layout engine's own type.
-fn round_edges(rect: taffy::Rect<f32>) -> taffy::Rect<f32> {
-    taffy::Rect {
+fn round_edges(rect: cephal::Rect<f32>) -> cephal::Rect<f32> {
+    cephal::Rect {
         left: rect.left.round(),
         right: rect.right.round(),
         top: rect.top.round(),
@@ -107,10 +118,10 @@ mod tests {
     use super::place;
 
     /// A layout at one offset with one size, with no insets.
-    fn layout(x: f32, y: f32, width: f32, height: f32) -> taffy::Layout {
-        let mut layout = taffy::Layout::new();
-        layout.location = taffy::Point { x, y };
-        layout.size = taffy::Size { width, height };
+    fn layout(x: f32, y: f32, width: f32, height: f32) -> cephal::Layout {
+        let mut layout = cephal::Layout::ZERO;
+        layout.location = cephal::Point { x, y };
+        layout.size = cephal::Size { width, height };
         layout
     }
 

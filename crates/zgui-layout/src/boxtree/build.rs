@@ -12,7 +12,6 @@ use crate::boxtree::{order, pseudo};
 use crate::node::box_node::BoxNode;
 use crate::node::kind::{BoxKind, FormattingContext, PseudoKind};
 use crate::style::convert::display::Participation;
-use crate::style::grid;
 use crate::tree::store::LayoutStore;
 
 /// The obligations that mean a document's box tree no longer describes it.
@@ -253,12 +252,6 @@ impl Builder<'_> {
             custom: custom.map(Into::into),
             draws_vector,
         };
-        if matches!(fc, FormattingContext::Grid) {
-            let names = grid::resolve_names(style);
-            if !names.is_empty() {
-                node.grid = Some(Box::new(names));
-            }
-        }
         let key = self.store.insert_with_content(node, content);
         counter::bump(Counter::BoxesRebuilt);
 

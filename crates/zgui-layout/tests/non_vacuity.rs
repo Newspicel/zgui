@@ -102,7 +102,7 @@ fn retexted() {
 /// Lays the document out again through the gate a frame goes through.
 fn relayout(store: &mut LayoutStore, content: &mut Content) {
     let mut tree = LayoutTree::new(store, content, DeviceStyle::default());
-    tree.relayout_root(taffy::Size {
+    tree.relayout_root(cephal::Size {
         width: VIEWPORT.0,
         height: VIEWPORT.1,
     });

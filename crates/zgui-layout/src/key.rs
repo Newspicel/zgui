@@ -17,7 +17,7 @@
 //! two spellings of what it names, and neither touches the bits. And the layout engine
 //! wants an opaque 64-bit integer, so [`to_node_id`] and [`from_node_id`] pack and unpack one.
 
-use taffy::NodeId;
+use cephal::NodeId;
 use zgui_arena::Key;
 use zgui_dom::side::BoxKey;
 
@@ -63,7 +63,7 @@ pub fn try_from_node_id(id: NodeId) -> Option<BoxKey> {
 
 #[cfg(test)]
 mod tests {
-    use taffy::NodeId;
+    use cephal::NodeId;
     use zgui_arena::{ArenaKind, DocumentId, DomainId, Generation, Key};
     use zgui_dom::side::BoxKey;
 

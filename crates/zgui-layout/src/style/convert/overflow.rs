@@ -8,12 +8,12 @@ use zgui_css::values::size::OverflowValue;
 /// content overflows, which is not known while the size that decides it is being computed. It
 /// therefore enters layout as `hidden`, which reserves nothing, and a container that turns out to
 /// overflow is laid out a second time with the gutter reserved.
-pub fn overflow(value: OverflowValue) -> taffy::Overflow {
+pub fn overflow(value: OverflowValue) -> cephal::style::Overflow {
     match value {
-        OverflowValue::Visible => taffy::Overflow::Visible,
-        OverflowValue::Clip => taffy::Overflow::Clip,
-        OverflowValue::Hidden | OverflowValue::Auto => taffy::Overflow::Hidden,
-        OverflowValue::Scroll => taffy::Overflow::Scroll,
+        OverflowValue::Visible => cephal::style::Overflow::Visible,
+        OverflowValue::Clip => cephal::style::Overflow::Clip,
+        OverflowValue::Hidden | OverflowValue::Auto => cephal::style::Overflow::Hidden,
+        OverflowValue::Scroll => cephal::style::Overflow::Scroll,
     }
 }
 
@@ -40,9 +40,9 @@ pub fn undecided_axes(style: &zgui_css::ComputedStyle) -> (bool, bool) {
 /// `auto` box whose content was found to overflow, and a scroll container that has been locked and
 /// keeps the gutter it had. A box that reserves a gutter is `scroll` to the layout algorithms
 /// whatever its style says, because reserving the space *is* what that value means to them.
-pub fn decided(value: OverflowValue, reserves_gutter: bool) -> taffy::Overflow {
+pub fn decided(value: OverflowValue, reserves_gutter: bool) -> cephal::style::Overflow {
     if reserves_gutter {
-        return taffy::Overflow::Scroll;
+        return cephal::style::Overflow::Scroll;
     }
     overflow(value)
 }
@@ -55,7 +55,10 @@ mod tests {
 
     #[test]
     fn auto_enters_layout_reserving_nothing_and_is_marked_undecided() {
-        assert_eq!(overflow(OverflowValue::Auto), taffy::Overflow::Hidden);
+        assert_eq!(
+            overflow(OverflowValue::Auto),
+            cephal::style::Overflow::Hidden
+        );
         assert!(is_undecided(OverflowValue::Auto));
         // Everything else is decided by the value alone, which is what makes the second pass
         // reachable only for the one value that needs it.
@@ -74,21 +77,34 @@ mod tests {
         // A gutter is reserved for `scroll` and for nothing else, so `auto` must not arrive as
         // `scroll` before the content is known to overflow — it would reserve a scrollbar's width
         // in every container that turns out not to need one.
-        assert_eq!(overflow(OverflowValue::Scroll), taffy::Overflow::Scroll);
+        assert_eq!(
+            overflow(OverflowValue::Scroll),
+            cephal::style::Overflow::Scroll
+        );
         for value in [
             OverflowValue::Visible,
             OverflowValue::Clip,
             OverflowValue::Hidden,
             OverflowValue::Auto,
         ] {
-            assert_ne!(overflow(value), taffy::Overflow::Scroll, "{value:?}");
+            assert_ne!(
+                overflow(value),
+                cephal::style::Overflow::Scroll,
+                "{value:?}"
+            );
         }
     }
 
     #[test]
     fn the_three_values_that_clip_are_kept_apart() {
-        assert_eq!(overflow(OverflowValue::Visible), taffy::Overflow::Visible);
-        assert_eq!(overflow(OverflowValue::Clip), taffy::Overflow::Clip);
-        assert_eq!(overflow(OverflowValue::Hidden), taffy::Overflow::Hidden);
+        assert_eq!(
+            overflow(OverflowValue::Visible),
+            cephal::style::Overflow::Visible
+        );
+        assert_eq!(overflow(OverflowValue::Clip), cephal::style::Overflow::Clip);
+        assert_eq!(
+            overflow(OverflowValue::Hidden),
+            cephal::style::Overflow::Hidden
+        );
     }
 }

@@ -387,8 +387,8 @@ fn vertical_align_keywords() {
 #[test]
 fn an_rtl_flex_row_lays_its_items_out_from_the_right() {
     // `flex-direction: row` in a right-to-left container puts the first item against the *right*
-    // edge. taffy has no writing mode, so this was expected to need mirroring of our own before it
-    // ever reached the engine; measured against taffy 0.12.2 it does not — the engine resolves the
+    // edge. the engine has no writing mode, so this was expected to need mirroring of our own before it
+    // ever reached the engine; measured against the engine it does not — the engine resolves the
     // main axis from `CoreStyle::direction`, which our style view answers from the cascaded
     // `direction`. The golden is here so that the day it stops being true is a diff rather than a
     // silence, and the explicit ordering below is here because a golden alone does not say which

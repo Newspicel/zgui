@@ -15,7 +15,8 @@
 //! bounded regardless: a pathological document can oscillate, and a layout pass that does not
 //! terminate is worse than one that stops at a width a browser would also have accepted.
 
-use taffy::BlockContext;
+use cephal::compute::block::BlockContext;
+use cephal::style::{Clear, Direction};
 use zgui_geom::CssPx;
 use zgui_text::LineBand;
 
@@ -31,6 +32,12 @@ pub const MAX_BAND_PASSES: usize = 3;
 /// every break a different question from the same break without one.
 pub fn any_floats(block: Option<&BlockContext<'_>>) -> bool {
     block.is_some_and(BlockContext::has_floats)
+}
+
+/// Where a line may sit beside the floats at `y`: its left edge and its width.
+fn slot(block: &BlockContext<'_>, y: f32) -> (f32, f32) {
+    let slot = block.find_bfc_slot(y, [0.0, 0.0], Direction::Ltr, Clear::None, None);
+    (slot.x, slot.border_width)
 }
 
 /// The band each of `lines` breaks into, given the floats around the context.
@@ -61,12 +68,6 @@ pub fn bands(
         out.push(LineBand::full(CssPx(width)));
     }
     out
-}
-
-/// The offset and width free at one height, in the box's own coordinates.
-fn slot(block: &BlockContext<'_>, y: f32) -> (f32, f32) {
-    let slot = block.find_content_slot(y, taffy::Clear::None, None);
-    (slot.x, slot.width)
 }
 
 /// Whether two band lists ask for different breaks.

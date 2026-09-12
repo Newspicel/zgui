@@ -60,7 +60,7 @@ than a shared object.
 3. **Restyle.** The style engine walks only the elements that owe a restyle. It computes their
    styles and turns each change into obligations for the stages below. For example, a colour change
    causes repaint damage and a width change causes relayout.
-4. **Layout.** The runtime patches changed box-tree regions and runs taffy over the dirty region. It
+4. **Layout.** The runtime patches changed box-tree regions and runs cephal over the boxes the scheduler queued. It
    shapes or re-breaks paragraphs only when their content or available width changes. It then
    delivers geometry observations. An observation can cause at most two additional
    flush-restyle-layout passes. The runtime also updates hit targets under stationary pointers and

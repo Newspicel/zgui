@@ -11,7 +11,8 @@
 //! can be dropped: without it a page with a handful of atomic inlines re-lays out its whole
 //! contents on every frame that changes any width.
 
-use taffy::{AvailableSpace, LayoutInput, LayoutPartialTree, RunMode, Size, SizingMode};
+use cephal::tree::{LayoutInput, LayoutTree as EngineTree, RequestedAxis, RunMode, SizingMode};
+use cephal::{AvailableSpace, Line, Size};
 use zgui_dom::side::BoxKey;
 
 use crate::key::to_node_id;
@@ -184,18 +185,21 @@ pub(crate) fn measure<C: MeasureContent>(
         LayoutInput {
             run_mode: RunMode::PerformLayout,
             sizing_mode: SizingMode::InherentSize,
-            axis: taffy::RequestedAxis::Both,
+            axis: RequestedAxis::Both,
             known_dimensions: known,
+            known_dimensions_are_definite: Size::TRUE,
             parent_size: available.into_options(),
             available_space: available,
-            vertical_margins_are_collapsible: taffy::Line::FALSE,
+            vertical_margins_are_collapsible: Line::FALSE,
+            context_key: 0,
         },
+        None,
     );
     let last = tree.state(key).and_then(|state| state.last_baseline);
     let measured = Measured {
         size: output.size,
-        first_baseline: output.first_baselines.y,
-        last_baseline: last.or(output.first_baselines.y),
+        first_baseline: output.baselines.first,
+        last_baseline: last.or(output.baselines.first),
     };
     let state = tree.state_mut(key);
     match state.atomic.as_deref_mut() {
@@ -207,7 +211,7 @@ pub(crate) fn measure<C: MeasureContent>(
 
 #[cfg(test)]
 mod tests {
-    use taffy::{AvailableSpace, Size};
+    use cephal::{AvailableSpace, Size};
 
     use crate::measure::Measured;
 

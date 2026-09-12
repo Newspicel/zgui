@@ -1,21 +1,21 @@
-//! That no engine style struct is ever built, and that a ten-thousand-box layout runs anyway.
+//! That engine styles are interned rather than built per box, and that a ten-thousand-box layout
+//! runs anyway.
 //!
-//! One convenience conversion in one style getter would make every box materialise an engine style
-//! per frame, and nothing about the resulting layout would look wrong — it would simply cost more
-//! than the layout it feeds. The property is therefore checked two ways: the type the getters
-//! return cannot be an owned style, and no source file in the crate constructs one.
+//! One engine style per box per frame would cost more than the layout it feeds, and nothing
+//! about the resulting layout would look wrong. The property is therefore checked two ways: the
+//! boxes of a uniform document share a handful of interned styles, and no source file in the
+//! crate builds an engine style outside the one module that interns them.
 
 mod support;
 
 use std::path::{Path, PathBuf};
 
-use taffy::LayoutPartialTree;
 use zgui_arena::DocumentId;
 use zgui_css::StyleDraft;
 use zgui_layout::measure::NoContent;
 use zgui_layout::node::box_node::BoxNode;
 use zgui_layout::node::kind::{BoxKind, FormattingContext};
-use zgui_layout::style::{DeviceStyle, StyleRef};
+use zgui_layout::style::DeviceStyle;
 use zgui_layout::tree::LayoutTree;
 use zgui_layout::tree::store::LayoutStore;
 
@@ -75,10 +75,7 @@ fn a_ten_thousand_box_layout_runs_and_places_every_box() {
     let mut content = NoContent;
     {
         let mut tree = LayoutTree::new(&mut store, &mut content, DeviceStyle::default());
-        assert!(tree.layout_root(taffy::Size {
-            width: 1000.0,
-            height: 800.0
-        }));
+        assert!(tree.layout_viewport(1000.0, 800.0));
     }
     let root = store.root().expect("a root");
     assert_eq!(store.node(root).children.len(), BOXES - 1);
@@ -100,24 +97,20 @@ fn a_ten_thousand_box_layout_runs_and_places_every_box() {
 }
 
 #[test]
-fn the_style_the_algorithms_read_is_a_borrow_and_not_an_owned_style() {
-    // The type system is what makes this hold rather than discipline: the associated type the
-    // container-style getter returns is a borrow, so a getter *cannot* return a built style.
-    fn assert_borrowed<'a, T>()
-    where
-        T: LayoutPartialTree,
-        for<'b> T::CoreContainerStyle<'b>: Copy,
+fn a_uniform_document_shares_a_handful_of_engine_styles() {
+    let mut store = fixture();
+    let mut content = NoContent;
     {
+        let mut tree = LayoutTree::new(&mut store, &mut content, DeviceStyle::default());
+        assert!(tree.layout_viewport(1000.0, 800.0));
     }
-    assert_borrowed::<LayoutTree<'_, NoContent>>();
-
+    // The root and the children: two cascade results, two variants, two entries. A store that
+    // built one entry per box would hold ten thousand.
     assert!(
-        size_of::<StyleRef<'_>>() < size_of::<taffy::Style<zgui_interned::Ident>>(),
-        "the borrowed view is not smaller than the style it replaces"
+        store.interned_engine_styles() <= 4,
+        "{} engine styles for {BOXES} boxes",
+        store.interned_engine_styles()
     );
-    // And smaller by a wide margin, not by a field: a view that grew to the size of a style would
-    // be a style with extra steps.
-    assert!(size_of::<StyleRef<'_>>() <= 64);
 }
 
 #[test]
@@ -132,29 +125,27 @@ fn no_source_file_in_this_crate_builds_an_engine_style() {
     );
 
     let mut offenders = Vec::new();
-    let mut saw_taffy = false;
+    let mut saw_engine = false;
     for path in &sources {
         let text = std::fs::read_to_string(path).expect("a readable source file");
-        if text.contains("taffy::") {
-            saw_taffy = true;
+        if text.contains("cephal::") {
+            saw_engine = true;
         }
-        if text.contains("taffy::Style") {
-            offenders.push(format!("{} names `taffy::Style`", path.display()));
-        }
-        // A bare `Style` would have to be imported to be constructible, and an import from the
-        // layout engine is what that looks like.
-        for line in text.lines().filter(|line| line.contains("use taffy::")) {
-            if line
-                .split(|character: char| !character.is_alphanumeric() && character != '_')
-                .any(|word| word == "Style")
-            {
-                offenders.push(format!("{} imports the engine's own style", path.display()));
-            }
+        // The one module that builds engine styles is the template builder; everything else
+        // borrows what the store interned from it. The interner's own tests build a default.
+        let builds = path.ends_with("style/engine/mod.rs") || path.ends_with("engine_styles.rs");
+        // A struct literal or the default is how one is built; a return type is not.
+        let literal = text.split("cephal::Style {").skip(1).any(|_| true)
+            && text
+                .lines()
+                .any(|line| line.contains("cephal::Style {") && !line.contains("-> &"));
+        if !builds && (literal || text.contains("Style::DEFAULT")) {
+            offenders.push(format!("{} builds an engine style", path.display()));
         }
     }
     // The control: if nothing in the crate mentioned the layout engine at all, the scan above
     // would pass while reading the wrong files.
-    assert!(saw_taffy, "no source file mentions the layout engine");
+    assert!(saw_engine, "no source file mentions the layout engine");
     assert!(offenders.is_empty(), "{offenders:#?}");
 }
 

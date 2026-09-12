@@ -23,7 +23,7 @@
 //! A document that fails neither test would be laid out to exactly the numbers it is already
 //! holding, so the pass is skipped and the numbers stand.
 
-use taffy::Size;
+use cephal::Size;
 
 use crate::tree::dirty::is_dirty;
 use crate::tree::store::LayoutStore;
@@ -60,5 +60,5 @@ pub fn stands(store: &LayoutStore, viewport: Size<f32>) -> bool {
     let Some(root) = store.root() else {
         return false;
     };
-    store.laid_out_for(viewport) && !is_dirty(store, root)
+    store.laid_out_for(viewport) && store.scheduler.is_empty() && !is_dirty(store, root)
 }

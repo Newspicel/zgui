@@ -42,7 +42,9 @@ pub mod vertical_align;
 
 use std::sync::Arc;
 
-use taffy::{BlockContext, NodeId, RequestedAxis, RunMode, Size};
+use cephal::Size;
+use cephal::compute::block::BlockContext;
+use cephal::tree::{NodeId, RequestedAxis, RunMode};
 use zgui_dom::side::BoxKey;
 
 use crate::inline::content::Generated;
@@ -61,7 +63,7 @@ pub(crate) fn measure_leaf<C: MeasureContent>(
     tree: &mut LayoutTree<'_, C>,
     node: NodeId,
     known: Size<Option<f32>>,
-    available: Size<taffy::AvailableSpace>,
+    available: Size<cephal::AvailableSpace>,
     run_mode: RunMode,
     axis: RequestedAxis,
     block: Option<&mut BlockContext<'_>>,

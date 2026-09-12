@@ -111,9 +111,16 @@ fn point_at(
 }
 
 /// How many boxes the document holds altogether.
+/// How many boxes the engine lays out: every box but the text runs, which the inline layer
+/// places on lines.
 fn boxes(harness: &zgui_platform_headless::Harness<zgui_runtime::Runtime>) -> u64 {
     let window = harness.app().windows().first().expect("a window");
-    u64::from(window.layout().borrow().len())
+    let layout = window.layout().borrow();
+    layout
+        .keys()
+        .into_iter()
+        .filter(|&key| layout.node(key).kind != zgui_layout::BoxKind::TextRun)
+        .count() as u64
 }
 
 /// The border box of the first fragment of the element carrying `class`.
@@ -226,7 +233,7 @@ fn a_hover_holds_the_layout_and_still_repaints() {
     });
     let laid_out = built.control(Counter::NodesRelaidOut);
     assert!(
-        laid_out.value() > boxes(&harness),
+        laid_out.value() >= boxes(&harness),
         "opening the window laid out {} boxes for a document of {}, so the control is not a \
          document-wide layout",
         laid_out.value(),
@@ -309,7 +316,8 @@ fn a_keystroke_lays_out_far_less_than_the_document() {
         harness.settle(16);
     });
     let laid_out = built.control(Counter::NodesRelaidOut);
-    let total = boxes(&harness);
+    // Far less: a keystroke reaches one label, its panel and the containers above them.
+    let total = boxes(&harness) / 2;
     let before = line_width_under(&harness, "label");
 
     let typing = recording.measure(|| {

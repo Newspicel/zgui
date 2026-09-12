@@ -25,6 +25,7 @@ impl LayoutStore {
     pub(crate) fn set_auto_scroll(&mut self, key: BoxKey, axes: (bool, bool)) {
         if let Some(state) = self.layout.get_mut(key).as_mut() {
             state.auto_scroll = axes;
+            self.touch_engine_style(key);
         }
     }
 
@@ -32,6 +33,7 @@ impl LayoutStore {
     pub(crate) fn set_scroll_lock(&mut self, key: BoxKey, axes: Option<(bool, bool)>) {
         if let Some(state) = self.layout.get_mut(key).as_mut() {
             state.scroll_lock = axes;
+            self.touch_engine_style(key);
         }
     }
 }

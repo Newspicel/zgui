@@ -16,12 +16,16 @@
 //! take depends on which floats it is level with, which depends on where the previous lines ended.
 //! Both are bounded loops rather than fixpoints left to settle.
 
-use taffy::{AvailableSpace, BlockContext, RequestedAxis, RunMode, Size};
+use cephal::compute::block::BlockContext;
+use cephal::tree::{RequestedAxis, RunMode};
+use cephal::{AvailableSpace, Size};
 use zgui_dom::side::BoxKey;
 use zgui_geom::CssPx;
 use zgui_text::{BreakRequest, LineBand, LineBands, ParagraphContent};
 
-use crate::inline::content::Role;
+use std::sync::Arc;
+
+use crate::inline::content::{Generated, Role};
 use crate::inline::lines::LineBox;
 use crate::inline::resolved::{InlineResolution, Placement};
 use crate::inline::vertical_align::scale_strut;
@@ -96,34 +100,107 @@ enum Constraint {
 }
 
 /// Lays out one inline formatting context.
+/// What a size probe computed over one context's lines, kept for the pass whose answer is kept.
+///
+/// A container asks for an item's size at a width and then lays the item out at that same width
+/// — every flex item and every block child does — and the second question is the first one
+/// again, with its answer to be kept. Everything up to the lines is the same work: the flattened
+/// content, the atomic boxes, the shaped paragraph and the break. The probe keeps them here and
+/// the kept pass adopts them, paying only for what a probe may not do: moving the shaper's own
+/// laid-out form to this break, placing the atoms, and writing the resolution.
+///
+/// Trusted within one layout pass only, at exactly the probe's constraint, and never over floats
+/// or atoms aligned to the line box, which the probe path never takes.
+#[derive(Clone, Debug)]
+pub(crate) struct ProbeMemo {
+    /// The pass the probe ran in.
+    generation: u32,
+    /// The width the probe broke at, as bits, or the two intrinsic constraints.
+    constraint: u32,
+    generated: Arc<Generated>,
+    root_strut: zgui_text::StrutMetrics,
+    boxes: boxes::Boxes,
+    run_extents: Vec<crate::inline::strut::Extents>,
+    summary: crate::measure::ShapedSummary,
+    computed: Vec<LineBox>,
+}
+
+/// The constraint of one ask, as the memo records it.
+fn constraint_bits(ask: &Ask) -> u32 {
+    match ask.constraint() {
+        Constraint::Definite(width) => width.to_bits(),
+        Constraint::MinContent => 1,
+        Constraint::MaxContent => 2,
+    }
+}
+
+/// Lays out one inline formatting context.
 pub(crate) fn compute<C: MeasureContent>(
     tree: &mut LayoutTree<'_, C>,
     key: BoxKey,
     ask: Ask,
     block: Option<&mut BlockContext<'_>>,
 ) -> Measured {
-    let generated = crate::inline::content_of(tree, key);
+    let generation = cephal::tree::CacheAccess::generation(tree);
     let scale = tree.device().scale;
     let basis = match ask.constraint() {
         Constraint::Definite(width) => Some(width),
         _ => None,
     };
-    let root_strut = scale_strut(tree.content().strut(&generated.root), scale);
-
-    // Everything on the line that is not a glyph, at the size and the alignment it currently has.
-    let mut boxes = boxes::resolve(tree, &generated, &root_strut, ask.available, basis);
-    let run_extents = strut::of_runs(tree.content(), &generated.runs, scale);
-
-    let content = ParagraphContent {
-        text: &generated.text,
-        map: &generated.map,
-        runs: &generated.runs,
-        boxes: &boxes.geometry,
-        paragraph: &generated.paragraph,
-        scale,
+    // The kept pass adopts the probe that just measured this box at this width.
+    let adopted = if ask.final_pass && !floats::any_floats(block.as_deref()) {
+        let state = tree.state_mut(key);
+        match state.probe_memo.take() {
+            Some(memo)
+                if memo.generation == generation && memo.constraint == constraint_bits(&ask) =>
+            {
+                Some(memo)
+            }
+            _ => None,
+        }
+    } else {
+        None
     };
-    let paragraph_key = generated.key(&content);
-    let summary = tree.content().shape_keyed(paragraph_key, &content);
+    let (generated, root_strut, mut boxes, run_extents, summary, adopted_lines) = match adopted {
+        Some(memo) => {
+            let ProbeMemo {
+                generated,
+                root_strut,
+                boxes,
+                run_extents,
+                summary,
+                computed,
+                ..
+            } = *memo;
+            (
+                generated,
+                root_strut,
+                boxes,
+                run_extents,
+                summary,
+                Some(computed),
+            )
+        }
+        None => {
+            let generated = crate::inline::content_of(tree, key);
+            let root_strut = scale_strut(tree.content().strut(&generated.root), scale);
+            // Everything on the line that is not a glyph, at the size and the alignment it
+            // currently has.
+            let boxes = boxes::resolve(tree, &generated, &root_strut, ask.available, basis);
+            let run_extents = strut::of_runs(tree.content(), &generated.runs, scale);
+            let content = ParagraphContent {
+                text: &generated.text,
+                map: &generated.map,
+                runs: &generated.runs,
+                boxes: &boxes.geometry,
+                paragraph: &generated.paragraph,
+                scale,
+            };
+            let paragraph_key = generated.key(&content);
+            let summary = tree.content().shape_keyed(paragraph_key, &content);
+            (generated, root_strut, boxes, run_extents, summary, None)
+        }
+    };
 
     // An inline-axis intrinsic probe is a question about the glyphs alone. Answering it from the
     // shaped result is not an optimisation of the general path: breaking at a candidate width would
@@ -150,7 +227,8 @@ pub(crate) fn compute<C: MeasureContent>(
     // computation and nothing else. Answered here so that it writes nothing: it neither moves the
     // shaper's laid-out form — which is what the paragraph's glyphs are drawn from — nor replaces
     // the resolution the last kept pass left behind. Both of those would be a measurement taken at
-    // a candidate width becoming what the box is painted as.
+    // a candidate width becoming what the box is painted as. What it computed is kept for the
+    // pass that will.
     if !ask.final_pass && !boxes.needs_line_box() && !floats::any_floats(block.as_deref()) {
         let request = BreakRequest {
             runs: &generated.runs,
@@ -170,7 +248,7 @@ pub(crate) fn compute<C: MeasureContent>(
             &boxes.geometry,
             &broken.boxes,
         );
-        return Measured {
+        let measured = Measured {
             size: Size {
                 width: lines::width(&computed),
                 height: lines::height(&computed),
@@ -178,6 +256,17 @@ pub(crate) fn compute<C: MeasureContent>(
             first_baseline: computed.first().map(LineBox::baseline),
             last_baseline: computed.last().map(LineBox::baseline),
         };
+        tree.state_mut(key).probe_memo = Some(Box::new(ProbeMemo {
+            generation,
+            constraint: constraint_bits(&ask),
+            generated,
+            root_strut,
+            boxes,
+            run_extents,
+            summary,
+            computed,
+        }));
+        return measured;
     }
 
     let mut bands: Vec<LineBand> = Vec::new();
@@ -199,6 +288,15 @@ pub(crate) fn compute<C: MeasureContent>(
             probe: !ask.final_pass,
         };
         broken = tree.content().break_lines(summary.key, &request);
+        // The kept pass over an adopted probe: the lines are the probe's, and the break above
+        // only moved the shaper's form to them.
+        if let Some(adopted) = adopted_lines
+            .as_ref()
+            .filter(|_| passes == 0 && bands.is_empty())
+        {
+            computed = adopted.clone();
+            break;
+        }
         computed = lines::compute(
             &broken,
             &generated.runs,
@@ -484,13 +582,13 @@ fn place<C: MeasureContent>(
             let state = tree.state_mut(box_);
             // The whole result, not only the position: an atomic inline is laid out by the line it
             // sits on, and no algorithm above it will write the box it came out at.
-            state.unrounded.location = taffy::Point { x, y };
+            state.unrounded.location = cephal::Point { x, y };
             if let Some(frame) = frame {
                 state.unrounded.size = frame.size;
-                state.unrounded.content_size = frame.size;
                 state.unrounded.margin = frame.margin;
                 state.unrounded.padding = frame.padding;
                 state.unrounded.border = frame.border;
+                state.unrounded.scrollable_overflow_rect = state.overflow_of_content_box();
             }
             state.snapped = state.unrounded;
         }

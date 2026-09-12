@@ -247,7 +247,7 @@ fn a_box_that_stops_producing_a_piece_damages_where_that_piece_was() {
             &mut content,
             zgui_layout::DeviceStyle::default(),
         );
-        assert!(tree.layout_root(taffy::Size {
+        assert!(tree.layout_root(cephal::Size {
             width: 2000.0,
             height: 400.0
         }));

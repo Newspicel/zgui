@@ -11,7 +11,7 @@
 //! three are baked into numbers it was handed once. Recomputing them here, and letting the break
 //! key cover them, is what stops a re-style against a warm cache from being a silent no-op.
 
-use taffy::{AvailableSpace, Size};
+use cephal::{AvailableSpace, Rect, Size};
 use zgui_css::ComputedStyle;
 use zgui_css::values::text::BaselineSource;
 use zgui_dom::side::BoxKey;
@@ -46,11 +46,11 @@ pub(crate) struct Frame {
     /// The border box.
     pub(crate) size: Size<f32>,
     /// The resolved margins, which the line has already consumed.
-    pub(crate) margin: taffy::Rect<f32>,
+    pub(crate) margin: Rect<f32>,
     /// The resolved padding.
-    pub(crate) padding: taffy::Rect<f32>,
+    pub(crate) padding: Rect<f32>,
     /// The resolved border widths.
-    pub(crate) border: taffy::Rect<f32>,
+    pub(crate) border: Rect<f32>,
 }
 
 impl Boxes {
@@ -158,8 +158,8 @@ fn atomic_box<C: MeasureContent>(
 /// content off at the box's own edges, and a baseline taken from a line that can be cut off is not
 /// a baseline anything outside the box can align to.
 fn clips_its_own_content<C: MeasureContent>(tree: &LayoutTree<'_, C>, key: BoxKey) -> bool {
-    let overflow = taffy::CoreStyle::overflow(&tree.style_of(key));
-    overflow.x != taffy::Overflow::Visible || overflow.y != taffy::Overflow::Visible
+    let overflow = tree.engine_style(key).overflow;
+    overflow.x != cephal::style::Overflow::Visible || overflow.y != cephal::style::Overflow::Visible
 }
 
 /// One edge of a nested inline box: the width it occupies, and nothing else.

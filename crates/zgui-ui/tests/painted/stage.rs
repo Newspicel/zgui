@@ -456,6 +456,15 @@ impl Stage {
             .expect("the picture was written");
     }
 
+    /// Writes the composed target out as a picture, when a run asked for one.
+    pub fn capture_composed(&self, name: &str) {
+        if crate::device::shot::directory().is_none() {
+            return;
+        }
+        self.drawn(|frame| crate::device::shot::whole(&frame.composed, name))
+            .expect("the picture was written");
+    }
+
     /// The colour at `at` in the most recent frame the device drew, as red, green and blue.
     ///
     /// # Panics
@@ -503,6 +512,33 @@ impl Stage {
             for y in top..bottom {
                 for x in left..right {
                     let [red, green, blue, _] = frame.pixels.rgba(x, y);
+                    colours.push((red, green, blue));
+                }
+            }
+            colours
+        })
+    }
+
+    /// The colours inside `rect` on the composed target after the most recent frame that drew.
+    ///
+    /// The composed target is persistent, so a frame that repainted one control still shows
+    /// every other control as the frame before it left it — which is what a surface shows.
+    pub fn composed_colours_in(
+        &self,
+        rect: zgui::geom::Rect<DevicePx, Device>,
+    ) -> Vec<(u8, u8, u8)> {
+        self.drawn(|frame| {
+            let size = frame.composed.size();
+            let left = (rect.origin.x.0.floor() as i32).clamp(0, size.width.saturating_sub(1));
+            let top = (rect.origin.y.0.floor() as i32).clamp(0, size.height.saturating_sub(1));
+            let right =
+                ((rect.origin.x.0 + rect.size.width.0).ceil() as i32).clamp(left, size.width);
+            let bottom =
+                ((rect.origin.y.0 + rect.size.height.0).ceil() as i32).clamp(top, size.height);
+            let mut colours = Vec::new();
+            for y in top..bottom {
+                for x in left..right {
+                    let [red, green, blue, _] = frame.composed.rgba(x, y);
                     colours.push((red, green, blue));
                 }
             }

@@ -53,8 +53,10 @@ fn an_unsized_replaced_box_collapses_instead_of_panicking() {
     // inline axis stretches because that is what block layout does to any block-level box with
     // `width: auto`; the block axis has nothing to say — no content, no ratio — and collapses.
     // Zero *area* is the contract: nothing invented an extent the content will later contradict.
+    // A replaced box sizes itself: with no intrinsic size and no CSS size it is empty on both
+    // axes, which is where a browser lays out an image that has not loaded.
     let fixture = fixture("root { display: block; width: 400px } picture { display: block }");
-    assert_eq!(first_child_size(&fixture, (400.0, 300.0)), (400.0, 0.0));
+    assert_eq!(first_child_size(&fixture, (400.0, 300.0)), (0.0, 0.0));
 }
 
 #[test]

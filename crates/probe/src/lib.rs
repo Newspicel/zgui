@@ -23,7 +23,7 @@ pub struct Canary {
     /// An accessibility role, from the pure-data accessibility vocabulary.
     pub role: accesskit::Role,
     /// An outer display type, from the layout engine.
-    pub display: taffy::Display,
+    pub display: cephal::style::Display,
     /// A paragraph alignment, from the text layout engine.
     pub alignment: parley::Alignment,
     /// A stylesheet cascade origin, from the style engine, whose library is named `style`.
@@ -45,7 +45,7 @@ impl Canary {
             scene: vello::Scene::new(),
             backends: wgpu::Backends::VULKAN,
             role: accesskit::Role::Button,
-            display: taffy::Display::Block,
+            display: cephal::style::Display::Block,
             alignment: parley::Alignment::Start,
             origin: style::stylesheets::Origin::UserAgent,
             window: winit::window::WindowAttributes::default(),
@@ -67,6 +67,6 @@ mod tests {
     #[test]
     fn the_engine_stack_links() {
         let canary = Canary::new();
-        assert_eq!(canary.display, taffy::Display::Block);
+        assert_eq!(canary.display, cephal::style::Display::Block);
     }
 }

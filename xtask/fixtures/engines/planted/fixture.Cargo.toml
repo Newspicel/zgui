@@ -3,4 +3,4 @@
 members = ["crates/*"]
 
 [workspace.dependencies]
-layout = { version = "0.12.2", package = "taffy" }
+layout = { version = "0.1.0", package = "cephal" }

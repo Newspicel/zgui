@@ -4,7 +4,6 @@ use zgui_css::ComputedStyle;
 use zgui_dom::NodeKey;
 use zgui_dom::side::BoxKey;
 
-use crate::node::grid_names::GridNames;
 use crate::node::kind::{BoxKind, FormattingContext, PaintedContent, PseudoKind};
 
 /// One box in the box tree.
@@ -60,8 +59,6 @@ pub struct BoxNode {
     pub text: Option<Box<str>>,
     /// What this box's own fragment paints. Rare payloads live in sparse store columns.
     pub painted: PaintedContent,
-    /// The grid line and area names, if this box is a grid container that names any.
-    pub grid: Option<Box<GridNames>>,
 }
 
 impl BoxNode {
@@ -80,7 +77,6 @@ impl BoxNode {
             block_level: false,
             text: None,
             painted: PaintedContent::Box,
-            grid: None,
         }
     }
 
@@ -108,10 +104,5 @@ impl BoxNode {
     /// Whether this box has no children in either order.
     pub fn is_leaf(&self) -> bool {
         self.children.is_empty() && self.paint_children.is_empty()
-    }
-
-    /// The grid line and area names this box carries, if it carries any.
-    pub fn grid_names(&self) -> Option<&GridNames> {
-        self.grid.as_deref()
     }
 }

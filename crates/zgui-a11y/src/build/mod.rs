@@ -33,6 +33,7 @@ use std::collections::{BTreeSet, HashSet};
 
 use accesskit::{Node, NodeId, Tree};
 use zgui_dom::{Document, NodeKey};
+use zgui_profile::Counter;
 
 use crate::build::pending::Pending;
 use crate::build::snapshot::Snapshots;
@@ -307,7 +308,7 @@ impl A11yBuilder {
             // Gone since the move was recorded, and already retired along with everything below it.
             return;
         }
-        zgui_profile::counter::bump(zgui_profile::Counter::A11yRemeasured);
+        zgui_profile::counter::bump(Counter::A11yRemeasured);
         let geometry = project::geometry::measure(world, key);
         let sent = self.held.remeasure(key, &geometry);
         self.file_by_space(world, key);
@@ -337,7 +338,7 @@ impl A11yBuilder {
             // Gone, and already retired along with everything below it.
             return;
         };
-        zgui_profile::counter::bump(zgui_profile::Counter::A11yProjected);
+        zgui_profile::counter::bump(Counter::A11yProjected);
         let changed = self.held.record(key, &projected);
         self.file_by_space(world, key);
         if changed {

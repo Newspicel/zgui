@@ -221,6 +221,26 @@ impl Document {
         self.edit_state().end_frame()
     }
 
+    /// Owes `node` and everything below it a new shaping, as a text change does.
+    ///
+    /// For a change the cascade did not make, taken by the frame between its stages: an element
+    /// whose text moved off a paint slot it shared has its paragraphs dropped and shaped again,
+    /// and the fragment pass rebuilds a box's lines only for a node that owes it work. Every
+    /// descendant is marked because the lines hang off boxes sourced from the text nodes inside,
+    /// and each box is entered by its own node. Outside a batch on purpose: the frame that calls
+    /// it is already running, so no frame is asked for and nothing is snapshotted.
+    pub fn reshape_subtree(&mut self, node: crate::id::node_key::NodeIndex) {
+        let mut stack = vec![node];
+        while let Some(at) = stack.pop() {
+            crate::dirty::propagate::mark(self.store_mut(), at, zgui_bits::Dirty::RESHAPE);
+            let mut child = self.store().core(at).first_child();
+            while let Some(index) = child {
+                stack.push(index);
+                child = self.store().core(index).next_sibling();
+            }
+        }
+    }
+
     /// Retires every obligation in `phase`, as the stage that serviced it would have.
     ///
     /// Each stage of a frame retires what it consumed as a side effect of doing its work, and the

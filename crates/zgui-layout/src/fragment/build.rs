@@ -130,7 +130,7 @@ pub(crate) struct Placed {
     /// Whether this box blends with what is painted behind it.
     pub(crate) blends: bool,
     /// The layout result after snapping, which is what the box's own record keeps.
-    pub(crate) snapped: taffy::Layout,
+    pub(crate) snapped: cephal::Layout,
     /// Whether this box itself moves by the same vector as the box above it.
     ///
     /// See [`Fragment::subtree_rigid`](crate::Fragment::subtree_rigid) for the three styles that

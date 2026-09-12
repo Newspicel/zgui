@@ -133,26 +133,7 @@ impl<'a> StoreView<'a> {
     }
 
     /// What one box measured on one axis, as the intrinsic pre-pass recorded it.
-    pub(crate) fn intrinsic(
-        &self,
-        key: BoxKey,
-        axis: crate::axis::Axis,
-    ) -> Option<crate::style::convert::length::IntrinsicSizes> {
-        self.state(key)?.intrinsic[axis.index()]
-    }
-
     /// Which axes of one box reserve a scrollbar gutter by layout's own decision.
-    pub(crate) fn reserved_gutter(&self, key: BoxKey) -> (bool, bool) {
-        let Some(state) = self.state(key) else {
-            return (false, false);
-        };
-        let held = state.auto_scroll;
-        match state.scroll_lock {
-            Some(locked) => (held.0 || locked.0, held.1 || locked.1),
-            None => held,
-        }
-    }
-
     /// The flattened form one box is holding.
     pub(crate) fn flattened(&self, key: BoxKey) -> Option<&Flattened> {
         self.state(key)?.flattened.as_deref()

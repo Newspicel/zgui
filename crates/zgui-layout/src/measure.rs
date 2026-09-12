@@ -15,7 +15,7 @@
 //! distinct content and [`break_lines`](MeasureContent::break_lines) once per width, and a
 //! measurer that fused them would turn every width probe back into a full pass.
 
-use taffy::{AvailableSpace, Size};
+use cephal::{AvailableSpace, Size};
 use zgui_css::ComputedStyle;
 use zgui_dom::side::BoxKey;
 use zgui_text::{
@@ -364,7 +364,7 @@ mod tests {
 
     #[test]
     fn the_empty_measurer_reports_nothing_rather_than_refusing() {
-        use taffy::{AvailableSpace, Size};
+        use cephal::{AvailableSpace, Size};
         use zgui_arena::{DomainId, Generation};
         use zgui_css::StyleDraft;
         use zgui_dom::side::BoxKey;

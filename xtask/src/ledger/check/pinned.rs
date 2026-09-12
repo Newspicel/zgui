@@ -40,7 +40,7 @@ const NEVER_VISIBLE: &[&str] = &[
     "stylo",
     "stylo_dom",
     "selectors",
-    "taffy",
+    "cephal",
     "parley",
     "wgpu",
     "vello",

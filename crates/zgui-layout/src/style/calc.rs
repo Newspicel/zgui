@@ -1,10 +1,9 @@
-//! `calc()` expressions, and the handles the layout algorithms carry them by.
+//! `calc()` expressions, and the identifiers the layout engine carries them by.
 //!
-//! The layout algorithms hold a `calc()` as an opaque machine word and hand it back when they know
-//! the percentage basis. The word has to be non-null and eight-byte aligned and is never
-//! dereferenced, so what travels in it here is an index shifted three places up — which satisfies
-//! both requirements by construction and involves no pointer and no borrow.
+//! The engine holds a `calc()` as a small integer and hands it back when it knows the percentage
+//! basis; the expression itself stays here, evaluated by the style engine's own arithmetic.
 
+use cephal::style::CalcId;
 use zgui_css::values::length::{Length, LengthPercentage};
 
 /// Where a conversion may intern a `calc()` it has no other representation for.
@@ -12,8 +11,8 @@ use zgui_css::values::length::{Length, LengthPercentage};
 /// A trait rather than the table itself so a test can supply its own store, and so the conversions
 /// stay the single statement of how a CSS value becomes an engine one whoever calls them.
 pub(crate) trait InternCalc {
-    /// A handle for one expression.
-    fn intern_calc(&mut self, value: &LengthPercentage) -> *const ();
+    /// The identifier for one expression.
+    fn intern_calc_id(&mut self, value: &LengthPercentage) -> CalcId;
 }
 
 /// The `calc()` expressions the interned style lowerings refer to.
@@ -39,8 +38,8 @@ impl CalcTable {
         self.scale = scale;
     }
 
-    /// A handle for one expression. The identifier is recorded for [`CalcTable::drain_issued`].
-    pub(crate) fn intern(&mut self, value: &LengthPercentage) -> *const () {
+    /// The identifier for one expression, recorded for [`CalcTable::drain_issued`].
+    pub(crate) fn intern_id(&mut self, value: &LengthPercentage) -> CalcId {
         let id = match self.free.pop() {
             Some(id) => {
                 self.exprs[id as usize] = Some(value.clone());
@@ -54,7 +53,7 @@ impl CalcTable {
             }
         };
         self.issued.push(id);
-        handle(id)
+        CalcId(id)
     }
 
     /// Moves the identifiers interned since the last drain into `into`.
@@ -74,7 +73,7 @@ impl CalcTable {
         }
     }
 
-    /// What one handle's expression evaluates to at `basis`, in device pixels.
+    /// What one identifier's expression evaluates to at `basis`, in device pixels.
     ///
     /// The basis arrives in device pixels because every length a layout pass handles is in device
     /// pixels, while the expression is written in CSS pixels — so the basis is converted down, the
@@ -82,9 +81,9 @@ impl CalcTable {
     ///
     /// # Panics
     ///
-    /// If the handle's expression was never interned here, or was released.
-    pub(crate) fn resolve(&self, value: *const (), basis: f32) -> f32 {
-        let index = index(value);
+    /// If the identifier's expression was never interned here, or was released.
+    pub(crate) fn resolve_id(&self, id: CalcId, basis: f32) -> f32 {
+        let index = id.0;
         let expression = self
             .exprs
             .get(index as usize)
@@ -100,26 +99,16 @@ impl CalcTable {
 }
 
 impl InternCalc for CalcTable {
-    fn intern_calc(&mut self, value: &LengthPercentage) -> *const () {
-        self.intern(value)
+    fn intern_calc_id(&mut self, value: &LengthPercentage) -> CalcId {
+        self.intern_id(value)
     }
-}
-
-/// The handle for an index: non-null and eight-byte aligned for every index.
-fn handle(index: u32) -> *const () {
-    ((index as usize + 1) << 3) as *const ()
-}
-
-/// The index a handle carries.
-fn index(handle: *const ()) -> u32 {
-    ((handle as usize >> 3) - 1) as u32
 }
 
 #[cfg(test)]
 mod tests {
     use zgui_css::values::length::{Length, LengthPercentage, percent};
 
-    use super::{CalcTable, handle, index};
+    use super::CalcTable;
 
     fn table(scale: f32) -> CalcTable {
         let mut table = CalcTable::default();
@@ -128,39 +117,29 @@ mod tests {
     }
 
     #[test]
-    fn every_handle_is_non_null_and_eight_byte_aligned() {
-        for raw in [0, 1, 2, 1000, u32::MAX / 8] {
-            let handle = handle(raw);
-            assert!(!handle.is_null(), "index {raw}");
-            assert_eq!(handle as usize % 8, 0, "index {raw}");
-            assert_eq!(index(handle), raw);
-        }
-    }
-
-    #[test]
     fn a_percentage_resolves_against_a_basis_measured_in_device_pixels() {
         let value = percent(0.25);
         let mut table = table(2.0);
-        let handle = table.intern(&value);
+        let handle = table.intern_id(&value);
         // A quarter of a 200-device-pixel basis, whatever the scale, because a percentage has no
         // unit of its own.
-        assert_eq!(table.resolve(handle, 200.0), 50.0);
+        assert_eq!(table.resolve_id(handle, 200.0), 50.0);
     }
 
     #[test]
     fn an_absolute_length_is_scaled_and_a_basis_does_not_change_it() {
         let value = LengthPercentage::new_length(Length::new(10.0));
         let mut table = table(2.0);
-        let handle = table.intern(&value);
-        assert_eq!(table.resolve(handle, 0.0), 20.0);
-        assert_eq!(table.resolve(handle, 999.0), 20.0);
+        let handle = table.intern_id(&value);
+        assert_eq!(table.resolve_id(handle, 0.0), 20.0);
+        assert_eq!(table.resolve_id(handle, 999.0), 20.0);
     }
 
     #[test]
     fn released_identifiers_are_reissued_and_their_owners_are_tracked() {
         let value = percent(0.5);
         let mut table = table(1.0);
-        let first = table.intern(&value);
+        let first = table.intern_id(&value);
         let mut owned = Vec::new();
         table.drain_issued(&mut owned);
         assert_eq!(owned.len(), 1);
@@ -169,8 +148,8 @@ mod tests {
         table.release(owned[0]);
         assert_eq!(table.live(), 0);
 
-        let second = table.intern(&percent(0.75));
+        let second = table.intern_id(&percent(0.75));
         assert_eq!(first, second, "a dead identifier grows the table forever");
-        assert_eq!(table.resolve(second, 100.0), 75.0);
+        assert_eq!(table.resolve_id(second, 100.0), 75.0);
     }
 }

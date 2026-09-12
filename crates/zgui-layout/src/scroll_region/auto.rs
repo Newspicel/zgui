@@ -70,9 +70,7 @@ pub fn revise<C: MeasureContent>(tree: &mut LayoutTree<'_, C>, root: BoxKey) -> 
         true
     });
     tree.store_mut().restore_overflow_roster(roster);
-    if changed {
-        crate::tree::dirty::mark_dirty(tree.store_mut(), root);
-    }
+    let _ = root;
     changed
 }
 

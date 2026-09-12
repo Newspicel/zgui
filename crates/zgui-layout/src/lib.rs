@@ -60,7 +60,7 @@
 //!
 //! let mut content = NoContent;
 //! let mut tree = LayoutTree::new(&mut store, &mut content, DeviceStyle::default());
-//! assert!(tree.layout_root(taffy::Size { width: 800.0, height: 600.0 }));
+//! assert!(tree.layout_viewport(800.0, 600.0));
 //!
 //! // A block-level root stretch-fits the viewport it was laid out in.
 //! let layout = store.layout_of(root).expect("laid out");
@@ -97,7 +97,7 @@ pub use crate::measure::{
 };
 pub use crate::node::box_node::BoxNode;
 pub use crate::node::kind::{BoxKind, FormattingContext, PseudoKind};
-pub use crate::style::{DeviceStyle, StyleRef};
+pub use crate::style::DeviceStyle;
 pub use crate::text::Paragraphs;
 pub use crate::tree::LayoutTree;
 pub use crate::tree::store::{LayoutStore, ResolvedLayout};

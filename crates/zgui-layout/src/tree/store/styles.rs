@@ -16,6 +16,7 @@ use zgui_profile::{Counter, counter};
 
 use crate::style::DeviceStyle;
 use crate::style::calc::CalcTable;
+use crate::style::grid::idents::IdentTable;
 use crate::style::lowered::LayoutStyle;
 
 /// The identity of everything a layout lowering reads.
@@ -101,6 +102,8 @@ pub(crate) struct StyleTable {
     lowered_for: Option<DeviceStyle>,
     /// The `calc()` expressions the lowerings refer to.
     calc: CalcTable,
+    /// The grid line and area names the lowerings refer to.
+    idents: IdentTable,
 }
 
 /// The address a cascade result is interned under.
@@ -187,8 +190,9 @@ impl StyleTable {
     /// Called once at the head of a layout pass, after every style write of the frame and before
     /// any read. A device change owes every entry a fresh lowering, because absolute lengths are
     /// scaled at lowering time; that rides the full relayout the change already forces.
-    pub(crate) fn ensure_lowered(&mut self, device: DeviceStyle) {
-        if self.lowered_for != Some(device) {
+    pub(crate) fn ensure_lowered(&mut self, device: DeviceStyle) -> bool {
+        let relowered = self.lowered_for != Some(device);
+        if relowered {
             self.calc.set_scale(device.scale);
             self.pending.clear();
             for lowering in self.by_layout.drain() {
@@ -220,7 +224,8 @@ impl StyleTable {
                 counter::bump(Counter::StylesLoweredFromCache);
                 continue;
             }
-            let lowered = LayoutStyle::lower(&entry.style, device, &mut self.calc);
+            let lowered =
+                LayoutStyle::lower(&entry.style, device, &mut self.calc, &mut self.idents);
             let mut calc_ids = Vec::new();
             self.calc.drain_issued(&mut calc_ids);
             self.by_layout.insert(
@@ -234,6 +239,7 @@ impl StyleTable {
             entry.lowered = Some(lowered);
             counter::bump(Counter::StylesLowered);
         }
+        relowered
     }
 
     /// The lowering a slot holds.
@@ -251,12 +257,21 @@ impl StyleTable {
             .expect("a pass lowers every style before reading any")
     }
 
-    /// Resolves a `calc()` handle a lowering embedded.
-    pub(crate) fn resolve_calc(&self, value: *const (), basis: f32) -> f32 {
-        self.calc.resolve(value, basis)
+    /// How many `calc()` expressions the lowerings hold.
+    /// What one `calc()` identifier evaluates to at `basis`, in device pixels.
+    pub(crate) fn resolve_calc_id(&self, id: cephal::style::CalcId, basis: f32) -> f32 {
+        self.calc.resolve_id(id, basis)
     }
 
-    /// How many `calc()` expressions the lowerings hold.
+    /// The handle of `<base>-start` or `<base>-end`, if a grid names such a line.
+    pub(crate) fn suffixed_ident(
+        &self,
+        base: cephal::style::Ident,
+        suffix: cephal::tree::IdentSuffix,
+    ) -> Option<cephal::style::Ident> {
+        self.idents.suffixed(base, suffix)
+    }
+
     pub(crate) fn interned_calcs(&self) -> usize {
         self.calc.live()
     }
@@ -343,8 +358,8 @@ mod tests {
         table.ensure_lowered(DeviceStyle::default());
         assert_eq!(table.by_layout.len(), 2);
         assert_ne!(
-            table.lowered(slots[0]).text_align,
-            table.lowered(slots[1]).text_align
+            table.lowered(slots[0]).template.text_align,
+            table.lowered(slots[1]).template.text_align
         );
     }
 
@@ -408,8 +423,8 @@ mod tests {
             scrollbar_width: 15.0,
         });
         assert_eq!(
-            table.lowered(slot).size.width,
-            taffy::Dimension::length(10.0)
+            table.lowered(slot).template.size.width,
+            cephal::style::Dimension::length(10.0)
         );
 
         table.ensure_lowered(DeviceStyle {
@@ -417,8 +432,8 @@ mod tests {
             scrollbar_width: 15.0,
         });
         assert_eq!(
-            table.lowered(slot).size.width,
-            taffy::Dimension::length(20.0),
+            table.lowered(slot).template.size.width,
+            cephal::style::Dimension::length(20.0),
             "absolute lengths are scaled at lowering time"
         );
     }

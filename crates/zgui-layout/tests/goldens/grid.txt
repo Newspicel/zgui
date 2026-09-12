@@ -1,4 +1,4 @@
-element fc=grid at=(0, 0) size=(300 x 400) content=(300 x 50) baseline=50 last-baseline=70.8
+element fc=grid at=(0, 0) size=(300 x 400) content=(300 x 104) baseline=50 last-baseline=70.8
   element fc=block at=(0, 0) size=(100 x 50) content=(100 x 24) baseline=16.8 paint-order=[2]
     anon-inline-root fc=inline at=(0, 0) size=(100 x 24) content=(24 x 24) baseline=16.8
       text fc=inline text="one" at=(0, 0) size=(0 x 0)

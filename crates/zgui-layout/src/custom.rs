@@ -13,7 +13,8 @@
 //! arms-length arrangement every other content seam has: the engine states what it needs, and who
 //! answers is a decision made two crates up.
 
-use taffy::{AvailableSpace, LayoutInput, LayoutPartialTree, RunMode, Size, SizingMode};
+use cephal::tree::{LayoutInput, LayoutTree as EngineTree, RequestedAxis, RunMode, SizingMode};
+use cephal::{AvailableSpace, Line, Size};
 use zgui_css::ComputedStyle;
 use zgui_dom::side::BoxKey;
 
@@ -55,7 +56,7 @@ pub enum Space {
 
 impl Space {
     /// The algorithms' own form.
-    fn to_taffy(self) -> AvailableSpace {
+    fn to_engine(self) -> AvailableSpace {
         match self {
             Self::Definite(space) => AvailableSpace::Definite(space),
             Self::MinContent => AvailableSpace::MinContent,
@@ -64,7 +65,7 @@ impl Space {
     }
 
     /// This form, from the algorithms' own.
-    fn from_taffy(space: AvailableSpace) -> Self {
+    fn from_engine(space: AvailableSpace) -> Self {
         match space {
             AvailableSpace::Definite(value) => Self::Definite(value),
             AvailableSpace::MinContent => Self::MinContent,
@@ -199,8 +200,8 @@ pub(crate) fn measure<C: MeasureContent>(
         known_width: known.width,
         known_height: known.height,
         available: (
-            Space::from_taffy(available.width),
-            Space::from_taffy(available.height),
+            Space::from_engine(available.width),
+            Space::from_engine(available.height),
         ),
         scale,
         final_pass,
@@ -250,12 +251,15 @@ impl<C: MeasureContent> TreeAccess<'_, '_, C> {
             LayoutInput {
                 run_mode,
                 sizing_mode: SizingMode::InherentSize,
-                axis: taffy::RequestedAxis::Both,
+                axis: RequestedAxis::Both,
                 known_dimensions: known,
+                known_dimensions_are_definite: Size::TRUE,
                 parent_size: available.into_options(),
                 available_space: available,
-                vertical_margins_are_collapsible: taffy::Line::FALSE,
+                vertical_margins_are_collapsible: Line::FALSE,
+                context_key: 0,
             },
+            None,
         );
         let last = self
             .tree
@@ -264,8 +268,8 @@ impl<C: MeasureContent> TreeAccess<'_, '_, C> {
             .and_then(|state| state.last_baseline);
         Measured {
             size: output.size,
-            first_baseline: output.first_baselines.y,
-            last_baseline: last.or(output.first_baselines.y),
+            first_baseline: output.baselines.first,
+            last_baseline: last.or(output.baselines.first),
         }
     }
 }
@@ -307,7 +311,7 @@ impl<C: MeasureContent> LayoutAccess for TreeAccess<'_, '_, C> {
         // element is the parent here, and this is its pen.
         let state = self.tree.state_mut(child);
         state.unrounded.size = measured.size;
-        state.unrounded.content_size = measured.size;
+        state.unrounded.scrollable_overflow_rect = state.overflow_of_content_box();
         state.snapped = state.unrounded;
         ChildMeasure::of(measured)
     }
@@ -319,7 +323,7 @@ impl<C: MeasureContent> LayoutAccess for TreeAccess<'_, '_, C> {
         // The whole placement, exactly as a line places its atoms: nothing above the element will
         // write this child's location again.
         let state = self.tree.state_mut(child);
-        state.unrounded.location = taffy::Point { x, y };
+        state.unrounded.location = cephal::Point { x, y };
         state.snapped = state.unrounded;
     }
 }
@@ -335,7 +339,7 @@ fn sized(known: (Option<f32>, Option<f32>)) -> Size<Option<f32>> {
 /// The algorithms' available space from the seam's pair.
 fn spaced(available: (Space, Space)) -> Size<AvailableSpace> {
     Size {
-        width: available.0.to_taffy(),
-        height: available.1.to_taffy(),
+        width: available.0.to_engine(),
+        height: available.1.to_engine(),
     }
 }

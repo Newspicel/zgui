@@ -1024,6 +1024,19 @@ impl Window {
         // is asked which contexts the named elements' text is in, and only the paragraphs it names
         // are thrown away. One control changing colour is one control's shaping, and answering it
         // with the window's costs a whole-document reflow for a change nothing else can see.
+        // The elements' line fragments name the paragraph that is about to go, and the fragment
+        // pass rebuilds a box's fragments only for an element that owes it work. A font change
+        // arrives with this bit from the cascade; a colour that moved an element off a shared
+        // slot has to set it here, or the box keeps a line naming a paragraph nothing holds and
+        // is painted with no glyphs at all.
+        {
+            let mut document = self.document.borrow_mut();
+            for (node, _run) in &split {
+                if let Some(index) = document.store().index_of(*node) {
+                    document.reshape_subtree(index);
+                }
+            }
+        }
         let mut layout = self.layout.borrow_mut();
         let mut reshape = zgui_layout::text::reshape::scope(
             &mut layout,

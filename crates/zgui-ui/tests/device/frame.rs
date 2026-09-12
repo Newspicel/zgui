@@ -60,6 +60,8 @@ pub struct Frame {
     pub quads: Vec<Filled>,
     /// Every glyph it held, in painting order.
     pub glyphs: Vec<Glyph>,
+    /// The persistent target frames are composed into, which is what a surface shows.
+    pub composed: Pixels,
     /// How many rasterisation passes the frame planned.
     pub passes: usize,
     /// How many vector items the damage cull dropped.
@@ -123,6 +125,7 @@ impl Frame {
             pixels: renderer
                 .read_presented()
                 .expect("these fixtures draw to a texture, which can be read back"),
+            composed: renderer.read_composed(),
             drawings,
             quads,
             glyphs,

@@ -8,34 +8,31 @@
 //! | `inline` | what an inline formatting context resolved to |
 //! | `scroll` | which axes reserve a scrollbar gutter |
 //! | `laid_out` | the viewport the results now held were produced for |
-//! | `measured` | the box's complete, bounded size-only answers |
 //! | `roster` | the boxes whose style puts them in a class some pass has to visit |
 
 pub(crate) mod content;
+pub(crate) mod engine_styles;
 mod fragments;
-mod full;
 mod inline;
 pub mod laid_out;
-pub(crate) mod measured;
 mod resolved;
 pub(crate) mod roster;
 mod scroll;
 pub(crate) mod state;
 pub(crate) mod styles;
 
-#[cfg(test)]
-mod tests;
-
 use rustc_hash::FxHashMap;
 use zgui_arena::{ArenaKind, ChunkArena, DocumentId, DomainId, PagedVec};
 use zgui_css::ComputedStyle;
 use zgui_dom::NodeKey;
 use zgui_dom::side::{BoxKey, BoxList};
+use zgui_profile::{Counter, counter};
 
 use crate::fragment::{FragKey, FragList, Fragment};
 use crate::key::{named, slot};
 use crate::node::box_node::BoxNode;
 use crate::tree::store::content::{BoxContent, CustomBox, ReplacedBox};
+use crate::tree::store::engine_styles::{EngineStyleId, EngineStyles};
 use crate::tree::store::roster::{Roster, Rosters};
 use crate::tree::store::state::BoxLayout;
 use crate::tree::store::styles::{StyleSlot, StyleTable};
@@ -79,6 +76,22 @@ pub struct LayoutStore {
     styles: StyleTable,
     /// Which interned style each box holds.
     style_slots: PagedVec<BoxKey, Option<StyleSlot>, 64>,
+    /// The engine styles boxes hold, one entry per distinct value.
+    engine_styles: EngineStyles,
+    /// Which engine style each box holds.
+    engine_style: PagedVec<BoxKey, Option<EngineStyleId>, 64>,
+    /// Boxes whose engine style is owed a refresh before the next pass reads it.
+    engine_pending: Vec<BoxKey>,
+    /// The boxes queued for recomputation, deepest first.
+    pub(crate) scheduler: cephal::schedule::Scheduler,
+    /// The layout pass count, which the engine's cache tags its entries with.
+    pub(crate) generation: u32,
+    /// Boxes whose unrounded result was written this pass, with the result they held before.
+    pub(crate) touched: Vec<(BoxKey, cephal::Layout)>,
+    /// Boxes whose unrounded result moved in the last pass.
+    changed: Vec<BoxKey>,
+    /// Boxes carrying the chain bit, see [`crate::tree::dirty`].
+    pub(crate) chain: Vec<BoxKey>,
     /// The box the document is laid out from.
     root: Option<BoxKey>,
     /// Which boxes each element generated, in document order.
@@ -160,6 +173,14 @@ impl LayoutStore {
             rosters: Rosters::default(),
             styles: StyleTable::default(),
             style_slots: PagedVec::for_domain(box_domain),
+            engine_styles: EngineStyles::default(),
+            engine_style: PagedVec::for_domain(box_domain),
+            engine_pending: Vec::new(),
+            scheduler: cephal::schedule::Scheduler::new(),
+            generation: 1,
+            touched: Vec::new(),
+            changed: Vec::new(),
+            chain: Vec::new(),
             root: None,
             boxes_of_node: PagedVec::for_domain(zgui_dom::id::document_id::node_domain(document)),
             fragments: ChunkArena::new(fragment_domain),
@@ -245,6 +266,7 @@ impl LayoutStore {
             self.custom.replace(key, Some(custom));
         }
         self.classify(key, &style);
+        self.engine_pending.push(key);
         if let Some(source) = source {
             self.boxes_of_node.get_mut(source).push(key);
         }
@@ -274,6 +296,7 @@ impl LayoutStore {
             self.styles.release(held);
         }
         self.classify(key, style);
+        self.engine_pending.push(key);
         true
     }
 
@@ -285,7 +308,90 @@ impl LayoutStore {
 
     /// Lowers every interned style that owes a lowering for `device`.
     pub(crate) fn ensure_lowered_styles(&mut self, device: crate::style::DeviceStyle) {
-        self.styles.ensure_lowered(device);
+        if self.styles.ensure_lowered(device) {
+            // Every template moved with the device, so every engine style is owed a refresh.
+            self.engine_pending.clear();
+            self.engine_pending.extend(self.keys());
+        }
+        self.ensure_engine_styles();
+    }
+
+    /// Refreshes every engine style owed a refresh.
+    ///
+    /// Every pass calls this after the lowerings are ensured and after every step that moves a
+    /// box's variant — an intrinsic measurement, a gutter decision — so the engine reads what
+    /// the box now is.
+    pub(crate) fn ensure_engine_styles(&mut self) {
+        while let Some(key) = self.engine_pending.pop() {
+            self.refresh_engine_style(key);
+        }
+    }
+
+    /// Turns the pass's touched list into [`LayoutStore::changed`].
+    pub(crate) fn finish_pass(&mut self) {
+        self.changed.clear();
+        let touched = core::mem::take(&mut self.touched);
+        for (key, before) in touched {
+            if self
+                .state(key)
+                .is_some_and(|state| state.unrounded != before)
+            {
+                self.changed.push(key);
+            }
+        }
+        counter::add(Counter::NodesChanged, self.changed.len() as u64);
+    }
+
+    /// The boxes whose unrounded result moved in the last pass.
+    pub fn changed(&self) -> &[BoxKey] {
+        &self.changed
+    }
+
+    /// Owes `key` a fresh engine style before the next pass reads it.
+    ///
+    /// Called wherever a box's variant moves: its formatting context, a replaced ratio, a gutter
+    /// decision, or an intrinsic measurement.
+    pub(crate) fn touch_engine_style(&mut self, key: BoxKey) {
+        self.engine_pending.push(key);
+    }
+
+    /// Rebuilds one box's engine style from its lowering and its variant.
+    fn refresh_engine_style(&mut self, key: BoxKey) {
+        let Some(node) = self.boxes.get(slot(key)) else {
+            return;
+        };
+        let Some(style_slot) = self.style_slots.get(key).copied().flatten() else {
+            return;
+        };
+        let lowered = self.styles.lowered(style_slot);
+        let natural_ratio = self.replaced.get(key).and_then(|it| it.as_ref()?.ratio);
+        let state = self.layout.get(key).and_then(Option::as_ref);
+        let gutter = state.map_or((false, false), |state| {
+            let held = state.auto_scroll;
+            match state.scroll_lock {
+                Some(locked) => (held.0 || locked.0, held.1 || locked.1),
+                None => held,
+            }
+        });
+        let measured = state.map_or_else(Default::default, |state| crate::style::MeasuredSizes {
+            horizontal: state.intrinsic[0],
+            vertical: state.intrinsic[1],
+        });
+        let variant = crate::style::engine::variant(node, lowered, natural_ratio, gutter, measured);
+        let style = crate::style::engine::engine_style(lowered, &variant);
+        let scroll_container = style.is_scroll_container();
+        let id = self.engine_styles.intern(style);
+        if let Some(state) = self.layout.get_mut(key).as_mut() {
+            state.scroll_container = scroll_container;
+        }
+        if let Some(held) = self.engine_style.replace(key, Some(id)) {
+            self.engine_styles.release(held);
+        }
+    }
+
+    /// How many distinct engine styles the boxes hold.
+    pub fn interned_engine_styles(&self) -> usize {
+        self.engine_styles.live()
     }
 
     /// The read-only half of the store, beside the layout column borrowed for writing.
@@ -301,7 +407,8 @@ impl LayoutStore {
             Structure {
                 boxes: &self.boxes,
                 styles: &self.styles,
-                style_slots: &self.style_slots,
+                engine_styles: &self.engine_styles,
+                engine_style: &self.engine_style,
                 replaced: &self.replaced,
                 root: self.root,
             },
@@ -313,7 +420,8 @@ impl LayoutStore {
         Structure {
             boxes: &self.boxes,
             styles: &self.styles,
-            style_slots: &self.style_slots,
+            engine_styles: &self.engine_styles,
+            engine_style: &self.engine_style,
             replaced: &self.replaced,
             root: self.root,
         }
@@ -436,6 +544,10 @@ impl LayoutStore {
         if let Some(slot) = self.style_slots.replace(key, None) {
             self.styles.release(slot);
         }
+        if let Some(id) = self.engine_style.replace(key, None) {
+            self.engine_styles.release(id);
+        }
+        // A queued box that is gone is skipped by the scheduler through its missing state.
         self.layout.clear(key);
         self.replaced.clear(key);
         self.custom.clear(key);
@@ -485,8 +597,10 @@ pub(crate) struct Structure<'a> {
     boxes: &'a ChunkArena<BoxNode>,
     /// The interned styles and their lowerings.
     styles: &'a StyleTable,
-    /// Which interned style each box holds.
-    style_slots: &'a PagedVec<BoxKey, Option<StyleSlot>, 64>,
+    /// The engine styles boxes hold.
+    engine_styles: &'a EngineStyles,
+    /// Which engine style each box holds.
+    engine_style: &'a PagedVec<BoxKey, Option<EngineStyleId>, 64>,
     /// Intrinsics and identifiers held only by replaced boxes.
     replaced: &'a PagedVec<BoxKey, Option<ReplacedBox>, 64>,
     /// The box the document is laid out from.
@@ -508,24 +622,33 @@ impl<'a> Structure<'a> {
         self.get(key).expect("a live box key")
     }
 
-    /// A live box's style in the layout algorithms' vocabulary.
+    /// A live box's style as the incremental engine reads it.
     ///
     /// # Panics
     ///
-    /// If the key names no live box, or no pass has lowered the styles yet.
-    pub(crate) fn lowered_style(&self, key: BoxKey) -> &'a crate::style::lowered::LayoutStyle {
-        let slot = self
-            .style_slots
+    /// If the key names no live box, or no pass has refreshed the engine styles yet.
+    pub(crate) fn engine_style(&self, key: BoxKey) -> &'a cephal::Style {
+        let id = self
+            .engine_style
             .get(key)
             .copied()
             .flatten()
-            .expect("a live box holds a style slot");
-        self.styles.lowered(slot)
+            .expect("a live box holds an engine style");
+        self.engine_styles.get(id)
     }
 
-    /// Resolves a `calc()` handle a lowering embedded.
-    pub(crate) fn resolve_calc(&self, value: *const (), basis: f32) -> f32 {
-        self.styles.resolve_calc(value, basis)
+    /// Resolves a `calc()` identifier a template embedded.
+    pub(crate) fn resolve_calc_id(&self, id: cephal::style::CalcId, basis: f32) -> f32 {
+        self.styles.resolve_calc_id(id, basis)
+    }
+
+    /// The handle of `<base>-start` or `<base>-end`, if a grid names such a line.
+    pub(crate) fn suffixed_ident(
+        &self,
+        base: cephal::style::Ident,
+        suffix: cephal::tree::IdentSuffix,
+    ) -> Option<cephal::style::Ident> {
+        self.styles.suffixed_ident(base, suffix)
     }
 
     /// The replaced-content record one box holds, if it is a replaced box.
@@ -546,3 +669,6 @@ impl<'a> Structure<'a> {
         keys
     }
 }
+
+#[cfg(test)]
+mod tests;

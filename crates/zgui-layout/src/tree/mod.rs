@@ -1,26 +1,25 @@
 //! The transient view of a document that the layout algorithms are driven over.
 
-pub mod cache;
 pub mod dirty;
+pub mod engine;
 mod executor;
 pub mod gate;
+pub(crate) mod marker;
 pub mod parallel;
-pub mod partial;
 pub mod print;
 pub mod store;
-pub mod traverse;
 pub(crate) mod view;
 
-use taffy::{AvailableSpace, Size};
+use cephal::{AvailableSpace, Size};
 use zgui_dom::side::BoxKey;
 use zgui_geom::{Device, DevicePx};
 use zgui_profile::{Counter, counter};
 
 use crate::inline::atomic::AtomicMemo;
 use crate::inline::content::styles::TextStyles;
-use crate::key::to_node_id;
+use crate::key::{from_node_id, to_node_id};
 use crate::measure::MeasureContent;
-use crate::style::{DeviceStyle, MeasuredSizes, StyleRef};
+use crate::style::DeviceStyle;
 use crate::tree::store::LayoutStore;
 
 /// A document's boxes, borrowed for the duration of one layout pass.
@@ -63,6 +62,14 @@ pub struct LayoutTree<'a, C> {
     has_custom: bool,
     /// The pool parallel batches run on, when the application installed one.
     parallel: Option<&'a parallel::LayoutPool>,
+    /// The pass count the engine's cache tags its entries with.
+    generation: u32,
+    /// How deep the pass is inside a speculative question, whose answers are not cached.
+    speculation: u32,
+    /// Boxes this tree wrote an unrounded result for, with the result they held before.
+    ///
+    /// A worker's list is merged into the store's when its batch finishes.
+    touched: Vec<(BoxKey, cephal::Layout)>,
 }
 
 impl<'a, C: MeasureContent> LayoutTree<'a, C> {
@@ -80,6 +87,9 @@ impl<'a, C: MeasureContent> LayoutTree<'a, C> {
             custom: &crate::custom::NoCustomLayout,
             has_custom: false,
             parallel: None,
+            generation: 0,
+            speculation: 0,
+            touched: Vec::new(),
         }
     }
 
@@ -96,16 +106,23 @@ impl<'a, C: MeasureContent> LayoutTree<'a, C> {
             return false;
         };
         counter::bump(Counter::LayoutReachedRoot);
+        let available = Size {
+            width: AvailableSpace::Definite(viewport.width),
+            height: AvailableSpace::Definite(viewport.height),
+        };
+        let root_query_changed = !self.store.get().laid_out_for(viewport);
+        self.generation = self.store.get().generation.wrapping_add(1).max(1);
+        self.store.get_mut().generation = self.generation;
         for pass in 0..crate::scroll_region::auto::MAX_PASSES {
             crate::intrinsic::prepass::run(self, root);
-            taffy::compute_root_layout(
-                self,
-                to_node_id(root),
-                Size {
-                    width: AvailableSpace::Definite(viewport.width),
-                    height: AvailableSpace::Definite(viewport.height),
-                },
-            );
+            self.store.get_mut().ensure_engine_styles();
+            let mut scheduler = core::mem::take(&mut self.store.get_mut().scheduler);
+            scheduler.run(self, to_node_id(root), root_query_changed || pass > 0);
+            self.store.get_mut().scheduler = scheduler;
+            if root_query_changed || pass > 0 {
+                self.state_mut(root).cache.clear();
+            }
+            cephal::compute::compute_root_layout(self, to_node_id(root), available);
             // The second pass exists only to revise a gutter, so a document with no undecided
             // gutter in it never enters one — and asking is a test against a list rather than a
             // walk of the tree.
@@ -116,21 +133,19 @@ impl<'a, C: MeasureContent> LayoutTree<'a, C> {
                 break;
             }
         }
-        self.store.get_mut().record_root_layout(viewport);
+        let touched = core::mem::take(&mut self.touched);
+        let store = self.store.get_mut();
+        store.touched.extend(touched);
+        store.finish_pass();
+        dirty::clear_chain(store);
+        store.record_root_layout(viewport);
         true
     }
 
-    /// The same pass, skipped when the results already held are the ones it would produce.
+    /// Lays the document out again only if something has changed since the last pass.
     ///
-    /// The pass is the largest thing a frame does and most frames do not need one: a colour that
-    /// moved, a caret that blinked and an animation that only repaints all leave every box where
-    /// the previous pass put it. [`gate`] states exactly what is compared, and the answer is
-    /// derived from the same invalidation the algorithms themselves read, so a document that would
-    /// lay out to different numbers can never be held.
-    ///
-    /// [`LayoutTree::layout_root`] is the ungated pass, and stays so: it is what a caller driving
-    /// its own fixpoint wants, and what a test comparing a held frame against a fresh one compares
-    /// it to.
+    /// A held pass costs one test of the gate: the viewport is the one it was laid out for and
+    /// nothing is queued for recomputation.
     pub fn relayout_root(&mut self, viewport: Size<f32>) -> gate::Relayout {
         if self.store.get().root().is_none() {
             return gate::Relayout::NoRoot;
@@ -288,27 +303,24 @@ impl<'a, C> LayoutTree<'a, C> {
     }
 
     /// A view over one box's style.
-    pub(crate) fn style_of(&self, key: BoxKey) -> StyleRef<'_> {
-        let structure = self.store.structure();
-        let node = structure.node(key);
-        let measured = MeasuredSizes {
-            horizontal: self.store.intrinsic(key, crate::axis::Axis::Horizontal),
-            vertical: self.store.intrinsic(key, crate::axis::Axis::Vertical),
-        };
-        let natural_ratio = structure.replaced(key).and_then(|content| content.ratio);
-        let lowered = structure.lowered_style(key);
-        StyleRef::new(node, lowered, self.device, measured, natural_ratio)
-            .with_reserved_gutter(self.store.reserved_gutter(key))
+    /// One box's style as the engine reads it.
+    pub(crate) fn engine_style(&self, key: BoxKey) -> &cephal::Style {
+        self.store.structure().engine_style(key)
     }
 
-    /// The structural half of the store, readable in both modes.
     pub(crate) fn structure(&self) -> crate::tree::store::Structure<'_> {
         self.store.structure()
     }
 
     /// Resolves a `calc()` handle the layout algorithms hand back.
-    pub(crate) fn resolve_calc(&self, value: *const (), basis: f32) -> f32 {
-        self.store.structure().resolve_calc(value, basis)
+    /// Resolves a `calc()` identifier a template embedded.
+    pub(crate) fn resolve_calc(&self, id: cephal::style::CalcId, basis: f32) -> f32 {
+        self.store.structure().resolve_calc_id(id, basis)
+    }
+
+    /// The box this tree is laying out, as its record.
+    pub(crate) fn node_of(&self, id: cephal::NodeId) -> &crate::node::box_node::BoxNode {
+        self.store.structure().node(from_node_id(id))
     }
 }
 

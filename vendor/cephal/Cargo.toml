@@ -1,0 +1,27 @@
+[package]
+name = "cephal"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+description = "Retained, incremental CSS layout (block, flexbox, grid) with spineless invalidation"
+
+# A vendored copy of https://github.com/zortax/cephal at commit 26f31e9, without the taffy
+# differential harness, the Chrome fixture suite, the benches and the examples, which are the
+# upstream repository's evidence and not a build input. See vendor/README.md for the local changes.
+
+[features]
+default = ["block", "flex", "grid"]
+block = []
+flex = []
+grid = []
+parallel = ["dep:rayon"]
+serde = ["dep:serde"]
+# Counters of queries, hits and measures, for profiling.
+stats = []
+
+[dependencies]
+rayon = { version = "1.12", optional = true }
+serde = { version = "1", features = ["derive", "rc"], optional = true }
+
+[lib]
+bench = false

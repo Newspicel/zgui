@@ -11,7 +11,7 @@
 //! and the symptom is a document that never re-flows when the window is resized — which no
 //! assertion about *what changed* can see, because nothing changed.
 
-use taffy::Size;
+use cephal::Size;
 
 use crate::tree::store::LayoutStore;
 

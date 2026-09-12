@@ -29,7 +29,7 @@ const VIEWPORT: (f32, f32) = (600.0, 400.0);
 /// Runs a gated pass and reports what it decided.
 fn gated(store: &mut LayoutStore, content: &mut Content, width: f32, height: f32) -> Relayout {
     let mut tree = LayoutTree::new(store, content, zgui_layout::style::DeviceStyle::default());
-    tree.relayout_root(taffy::Size { width, height })
+    tree.relayout_root(cephal::Size { width, height })
 }
 
 /// How many boxes were laid out and how many measurements were served while `body` ran.

@@ -83,7 +83,7 @@ from a schedule that is local to a checkout, and it reports that it skipped when
 
 Every external engine is reachable from a bounded, enumerable set of crates, and the table is the
 architecture. `stylo` and its satellites are named by `zgui-css`, `zgui-dom` and `zgui-style` and by
-nothing else. `taffy` is named by `zgui-layout`. `parley` and its satellites by `zgui-text-parley`.
+nothing else. `cephal` is named by `zgui-layout`. `parley` and its satellites by `zgui-text-parley`.
 `vello` by `zgui-render-vector-vello`. `wgpu` by the three graphics crates and the windowing
 backend. `winit` by `zgui-platform-winit`. The Wayland protocol, its toolkit and the loop it is
 read on by `zgui-platform-wayland`. `reactive_graph` by `zgui-reactive`.
@@ -175,7 +175,7 @@ version.workspace = true
 
 # L4 — engines. External dependencies are inherited: `foo.workspace = true`.
 [dependencies]
-taffy.workspace = true
+cephal.workspace = true
 zgui-css = { path = "../zgui-css", version = "0.1.0" }
 ```
 

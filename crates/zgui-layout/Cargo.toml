@@ -25,9 +25,8 @@ zgui-text = { path = "../zgui-text", version = "0.1.0" }
 zgui-text-style = { path = "../zgui-text-style", version = "0.1.0" }
 
 # The layout algorithms. The feature set is pinned in the workspace manifest and asserted by the
-# versions ledger, because losing `content_size` silently zeroes every intrinsic size and losing
-# `float_layout` silently deletes floats.
-taffy.workspace = true
+# versions ledger.
+cephal.workspace = true
 
 rustc-hash.workspace = true
 rayon.workspace = true

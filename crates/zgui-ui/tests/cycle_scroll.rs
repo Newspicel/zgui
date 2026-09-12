@@ -506,7 +506,7 @@ fn a_dialog_cycle_leaves_the_page_where_it_stood() {
 /// Each member is unshrinkable and laps the one before it by a negative margin, and that pairing is
 /// what the flex container's intrinsic main size used to be computed wrongly for: the overlap came
 /// back multiplied by the member's whole width, so the container measured at nothing and every
-/// member piled up on the first. See the `scaled_shrink_factor` note in `vendor/taffy`.
+/// member piled up on the first. The engine scales the shrink factor by the flex basis, as the specification says.
 #[test]
 fn an_overlapping_stack_measures_its_whole_width() {
     let mut stage = Stage::open(

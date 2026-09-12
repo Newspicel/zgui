@@ -1,40 +1,21 @@
-//! One computed style, lowered once into the form the layout algorithms read.
+//! One computed style, lowered once into the form the layout engine reads.
 //!
-//! The style traits used to convert CSS values on every accessor call, which put the same
-//! conversions inside every hot layout loop — measured at roughly a fifth of the self time of a
-//! keystroke, a scroll and a resize. A [`LayoutStyle`] is that conversion done once per distinct
-//! cascade result and device, held by the store's style table, and read by [`StyleRef`] as plain
-//! fields.
-//!
-//! What cannot be lowered stays out. A content keyword resolves against a *box's* measured
-//! intrinsic sizes, so the packed value holds `auto` and a [`Keywords`] slot says which
-//! measurement to substitute at read time. An `auto` aspect ratio defers to a box's natural
-//! ratio the same way. Grid track templates stay on the computed style and are walked by the
-//! existing lazy iterators, because they allocate nothing per call and their conversion is not
-//! in any measured hot path.
-//!
-//! [`StyleRef`]: crate::style::StyleRef
+//! The lowering is done once per distinct cascade result and device, held by the store's style
+//! table, and shared by every box that holds the cascade result. Most of it is the engine style's
+//! template; what stays beside it is what a box has to add before the engine can read the style:
+//! a `min-*`/`max-*` keyword resolves against the *box's* measured intrinsic sizes, an `auto`
+//! aspect ratio defers to the box's natural ratio, and `position: fixed` is told apart from
+//! absolute for overflow alone.
 
-use taffy::prelude::TaffyAuto;
-use taffy::{
-    AlignContent, AlignItems, AlignSelf, BoxSizing, Clear, Dimension, Direction, FlexDirection,
-    FlexWrap, Float, GridAutoFlow, GridPlacement, JustifyContent, LengthPercentage,
-    LengthPercentageAuto, Line, Overflow, Point, Position, Rect, Size, TextAlign,
-};
 use zgui_css::ComputedStyle;
-use zgui_css::values::flex::{FlexDirectionValue, FlexWrapValue};
-use zgui_css::values::grid::GridAutoFlowValue;
 use zgui_css::values::size::{
-    BoxSizingValue, ClearValue, FlexBasisValue, FloatValue, MaxSizeValue, PositionValue, SizeValue,
-    VisibilityValue,
+    BoxSizingValue, MaxSizeValue, PositionValue, SizeValue, VisibilityValue,
 };
-use zgui_css::values::text::TextAlignKeyword;
-use zgui_interned::Ident;
 
 use crate::style::calc::InternCalc;
+use crate::style::convert::aspect;
 use crate::style::convert::length::IntrinsicSizes;
-use crate::style::convert::{align, aspect, length, overflow};
-use crate::style::gap::gap_value;
+use crate::style::grid::idents::IdentTable;
 use crate::style::{DeviceStyle, MeasuredSizes};
 
 /// Which per-box measurement a size slot substitutes, if any.
@@ -44,34 +25,30 @@ enum Keyword {
     None = 0,
     /// Substitute the content's minimum size.
     Min = 1,
-    /// Substitute the content's maximum size. `fit-content` lands here too, exactly as the
-    /// per-call conversion resolved it.
+    /// Substitute the content's maximum size. `fit-content` lands here too.
     Max = 2,
 }
 
 /// One two-bit keyword slot per substitutable size.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) struct Keywords(u16);
+pub(crate) struct Keywords(u8);
 
 /// The substitutable size slots, two bits each.
 #[derive(Clone, Copy, Debug)]
 enum Slot {
-    Width = 0,
-    Height = 1,
-    MinWidth = 2,
-    MinHeight = 3,
-    MaxWidth = 4,
-    MaxHeight = 5,
-    FlexBasis = 6,
+    MinWidth = 0,
+    MinHeight = 1,
+    MaxWidth = 2,
+    MaxHeight = 3,
 }
 
 impl Keywords {
     fn set(&mut self, slot: Slot, keyword: Keyword) {
-        self.0 |= (keyword as u16) << ((slot as u16) * 2);
+        self.0 |= (keyword as u8) << ((slot as u8) * 2);
     }
 
     fn get(self, slot: Slot) -> Keyword {
-        match (self.0 >> ((slot as u16) * 2)) & 0b11 {
+        match (self.0 >> ((slot as u8) * 2)) & 0b11 {
             1 => Keyword::Min,
             2 => Keyword::Max,
             _ => Keyword::None,
@@ -84,83 +61,24 @@ impl Keywords {
     }
 }
 
-/// One computed style in the layout algorithms' vocabulary, conversion already paid.
+/// One computed style in the layout engine's vocabulary, conversion already paid.
 #[derive(Clone, Debug)]
 pub(crate) struct LayoutStyle {
-    /// `top`/`right`/`bottom`/`left`, already `auto` throughout for a static box.
-    pub(crate) inset: Rect<LengthPercentageAuto>,
-    /// `width`/`height`, `auto` where a keyword slot substitutes.
-    pub(crate) size: Size<Dimension>,
-    /// `min-width`/`min-height`.
-    pub(crate) min_size: Size<Dimension>,
-    /// `max-width`/`max-height`.
-    pub(crate) max_size: Size<Dimension>,
-    /// The four margins.
-    pub(crate) margin: Rect<LengthPercentageAuto>,
-    /// The four paddings.
-    pub(crate) padding: Rect<LengthPercentage>,
-    /// The four border widths, `none`/`hidden` sides already zero.
-    pub(crate) border: Rect<LengthPercentage>,
+    /// The engine style before a box's variant is patched in.
+    pub(crate) template: cephal::Style,
     /// How much of an intrinsic measurement is this style's own padding and border, per axis.
     ///
     /// Zero under `border-box`. Percentage and `calc()` components contribute nothing, exactly as
     /// resolving them against no basis contributed nothing per call.
-    pub(crate) intrinsic_inset: Size<f32>,
+    pub(crate) intrinsic_inset: cephal::Size<f32>,
     /// The written aspect ratio, degenerate ratios already discarded.
     aspect_explicit: Option<f32>,
-    /// `row-gap` and `column-gap`, the column gap on the inline axis.
-    pub(crate) gap: Size<LengthPercentage>,
-    /// `flex-basis`, `content` already `auto`.
-    pub(crate) flex_basis: Dimension,
-    /// `flex-grow`.
-    pub(crate) flex_grow: f32,
-    /// `flex-shrink`.
-    pub(crate) flex_shrink: f32,
-    /// The six alignment properties, writing direction already applied.
-    pub(crate) align_content: Option<AlignContent>,
-    pub(crate) justify_content: Option<JustifyContent>,
-    pub(crate) align_items: Option<AlignItems>,
-    pub(crate) justify_items: Option<AlignItems>,
-    pub(crate) align_self: Option<AlignSelf>,
-    pub(crate) justify_self: Option<AlignSelf>,
-    /// `grid-row` placement.
-    pub(crate) grid_row: Line<GridPlacement<Ident>>,
-    /// `grid-column` placement.
-    pub(crate) grid_column: Line<GridPlacement<Ident>>,
-    /// Which size slots substitute a measurement at read time.
-    pub(crate) keywords: Keywords,
-    /// Whether any length of this style resolves against the containing block, per axis.
-    ///
-    /// A layout question carries the containing block's size so that percentages inside the box
-    /// can resolve against it. A box with no percentage on an axis answers the same whatever that
-    /// size is, and a cache that keyed on it anyway would miss for every child of a container
-    /// whose content size moved — which is every sibling of a row that grew. `calc()` is counted
-    /// as dependent without looking inside it.
-    pub(crate) parent_dependency: [bool; 2],
-    /// `box-sizing`.
-    pub(crate) box_sizing: BoxSizing,
-    /// The writing direction.
-    pub(crate) direction: Direction,
-    /// The position class the algorithms distinguish: in flow or absolutely placed.
-    pub(crate) position: Position,
-    /// Whether the box is `position: fixed`, told apart from absolute for overflow only.
-    pub(crate) fixed: bool,
-    /// `overflow` per axis before layout decides a gutter; a reserved axis reads as `Scroll`.
-    pub(crate) overflow: Point<Overflow>,
-    /// The three legacy block-alignment values, or `Auto`.
-    pub(crate) text_align: TextAlign,
-    /// `float`, flow-relative keywords already resolved.
-    pub(crate) float: Float,
-    /// `clear`, flow-relative keywords already resolved.
-    pub(crate) clear: Clear,
-    /// `flex-direction`.
-    pub(crate) flex_direction: FlexDirection,
-    /// `flex-wrap`.
-    pub(crate) flex_wrap: FlexWrap,
-    /// `grid-auto-flow`.
-    pub(crate) grid_auto_flow: GridAutoFlow,
     /// Whether `aspect-ratio` prefers the content's natural proportions.
     aspect_auto: bool,
+    /// Which `min-*`/`max-*` slots substitute a measurement at read time.
+    pub(crate) keywords: Keywords,
+    /// Whether the box is `position: fixed`, told apart from absolute for overflow only.
+    pub(crate) fixed: bool,
     /// Whether `visibility: collapse` removes this box when its parent is a flex container.
     pub(crate) collapses_as_flex_item: bool,
 }
@@ -169,303 +87,59 @@ impl LayoutStyle {
     /// Lowers one computed style for one device.
     ///
     /// Every `calc()` met on the way is interned into `calc`, and the caller owns the identifiers
-    /// the interner issued.
+    /// the interner issued. Grid names are interned into `idents` and never released.
     pub(crate) fn lower(
         style: &ComputedStyle,
         device: DeviceStyle,
         calc: &mut impl InternCalc,
+        idents: &mut IdentTable,
     ) -> Self {
-        let scale = device.scale;
         let box_ = style.get_box();
         let position_group = style.get_position();
-        let margin_group = style.get_margin();
-        let padding_group = style.get_padding();
-        let border_group = style.get_border();
-        let rtl = style.get_inherited_box().direction == zgui_css::values::text::Direction::Rtl;
-
         let mut keywords = Keywords::default();
-        keywords.set(Slot::Width, keyword_of_size(&position_group.width));
-        keywords.set(Slot::Height, keyword_of_size(&position_group.height));
         keywords.set(Slot::MinWidth, keyword_of_size(&position_group.min_width));
         keywords.set(Slot::MinHeight, keyword_of_size(&position_group.min_height));
         keywords.set(Slot::MaxWidth, keyword_of_max(&position_group.max_width));
         keywords.set(Slot::MaxHeight, keyword_of_max(&position_group.max_height));
-        if let FlexBasisValue::Size(size) = &position_group.flex_basis {
-            keywords.set(Slot::FlexBasis, keyword_of_size(size));
-        }
-
-        let inset = if box_.position == PositionValue::Static {
-            Rect::auto()
-        } else {
-            Rect {
-                left: length::inset(&position_group.left, scale, calc),
-                right: length::inset(&position_group.right, scale, calc),
-                top: length::inset(&position_group.top, scale, calc),
-                bottom: length::inset(&position_group.bottom, scale, calc),
-            }
-        };
-        let padding = Rect {
-            left: length::padding(&padding_group.padding_left, scale, calc),
-            right: length::padding(&padding_group.padding_right, scale, calc),
-            top: length::padding(&padding_group.padding_top, scale, calc),
-            bottom: length::padding(&padding_group.padding_bottom, scale, calc),
-        };
-        let border = Rect {
-            left: length::border_side(
-                &border_group.border_left_width,
-                border_group.border_left_style,
-                scale,
-            ),
-            right: length::border_side(
-                &border_group.border_right_width,
-                border_group.border_right_style,
-                scale,
-            ),
-            top: length::border_side(
-                &border_group.border_top_width,
-                border_group.border_top_style,
-                scale,
-            ),
-            bottom: length::border_side(
-                &border_group.border_bottom_width,
-                border_group.border_bottom_style,
-                scale,
-            ),
-        };
+        let template = crate::style::engine::template(style, device, calc, idents);
         let intrinsic_inset = if position_group.box_sizing == BoxSizingValue::ContentBox {
-            lengths_of(&padding) + lengths_of(&border)
+            (template.padding.map(|it| it.value_or_zero())
+                + template.border.map(|it| it.value_or_zero()))
+            .sum_axes()
         } else {
-            Size {
-                width: 0.0,
-                height: 0.0,
-            }
+            cephal::Size::ZERO
         };
-
-        let (explicit, auto) = aspect::split(&position_group.aspect_ratio);
-
-        let mut lowered = Self {
-            parent_dependency: [false, false],
-            inset,
-            size: Size {
-                width: length::size(&position_group.width, scale, calc, None),
-                height: length::size(&position_group.height, scale, calc, None),
-            },
-            min_size: Size {
-                width: length::size(&position_group.min_width, scale, calc, None),
-                height: length::size(&position_group.min_height, scale, calc, None),
-            },
-            max_size: Size {
-                width: length::max_size(&position_group.max_width, scale, calc, None),
-                height: length::max_size(&position_group.max_height, scale, calc, None),
-            },
-            margin: Rect {
-                left: length::margin(&margin_group.margin_left, scale, calc),
-                right: length::margin(&margin_group.margin_right, scale, calc),
-                top: length::margin(&margin_group.margin_top, scale, calc),
-                bottom: length::margin(&margin_group.margin_bottom, scale, calc),
-            },
-            padding,
-            border,
+        let (aspect_explicit, aspect_auto) = aspect::split(&position_group.aspect_ratio);
+        Self {
+            template,
             intrinsic_inset,
-            aspect_explicit: explicit,
-            gap: Size {
-                width: gap_value(&position_group.column_gap, scale, calc),
-                height: gap_value(&position_group.row_gap, scale, calc),
-            },
-            flex_basis: match &position_group.flex_basis {
-                FlexBasisValue::Size(size) => length::size(size, scale, calc, None),
-                FlexBasisValue::Content => Dimension::AUTO,
-            },
-            flex_grow: position_group.flex_grow.0,
-            flex_shrink: position_group.flex_shrink.0,
-            align_content: align::align_content(position_group.align_content.primary(), rtl),
-            justify_content: align::align_content(position_group.justify_content.primary(), rtl),
-            align_items: align::align_items(position_group.align_items.0, rtl),
-            justify_items: align::justify_items((position_group.justify_items.computed.0).0, rtl),
-            align_self: align::align_items(position_group.align_self.0, rtl),
-            justify_self: align::align_items(position_group.justify_self.0, rtl),
-            grid_row: crate::style::grid::placement::line(
-                &position_group.grid_row_start,
-                &position_group.grid_row_end,
-            ),
-            grid_column: crate::style::grid::placement::line(
-                &position_group.grid_column_start,
-                &position_group.grid_column_end,
-            ),
+            aspect_explicit,
+            aspect_auto,
             keywords,
-            box_sizing: match position_group.box_sizing {
-                BoxSizingValue::ContentBox => BoxSizing::ContentBox,
-                BoxSizingValue::BorderBox => BoxSizing::BorderBox,
-            },
-            direction: if rtl { Direction::Rtl } else { Direction::Ltr },
-            position: match box_.position {
-                PositionValue::Static | PositionValue::Relative | PositionValue::Sticky => {
-                    Position::Relative
-                }
-                PositionValue::Absolute | PositionValue::Fixed => Position::Absolute,
-            },
             fixed: box_.position == PositionValue::Fixed,
-            overflow: Point {
-                x: overflow::overflow(box_.overflow_x),
-                y: overflow::overflow(box_.overflow_y),
-            },
-            text_align: match style.get_inherited_text().text_align {
-                TextAlignKeyword::MozLeft => TextAlign::LegacyLeft,
-                TextAlignKeyword::MozRight => TextAlign::LegacyRight,
-                TextAlignKeyword::MozCenter => TextAlign::LegacyCenter,
-                _ => TextAlign::Auto,
-            },
-            float: match box_.float {
-                FloatValue::None => Float::None,
-                FloatValue::Left => Float::Left,
-                FloatValue::Right => Float::Right,
-                FloatValue::InlineStart => flow(rtl, Float::Left, Float::Right),
-                FloatValue::InlineEnd => flow(rtl, Float::Right, Float::Left),
-            },
-            clear: match box_.clear {
-                ClearValue::None => Clear::None,
-                ClearValue::Left => Clear::Left,
-                ClearValue::Right => Clear::Right,
-                ClearValue::Both => Clear::Both,
-                ClearValue::InlineStart => flow(rtl, Clear::Left, Clear::Right),
-                ClearValue::InlineEnd => flow(rtl, Clear::Right, Clear::Left),
-            },
-            flex_direction: match position_group.flex_direction {
-                FlexDirectionValue::Row => FlexDirection::Row,
-                FlexDirectionValue::RowReverse => FlexDirection::RowReverse,
-                FlexDirectionValue::Column => FlexDirection::Column,
-                FlexDirectionValue::ColumnReverse => FlexDirection::ColumnReverse,
-            },
-            flex_wrap: match position_group.flex_wrap {
-                FlexWrapValue::Nowrap => FlexWrap::NoWrap,
-                FlexWrapValue::Wrap => FlexWrap::Wrap,
-                FlexWrapValue::WrapReverse => FlexWrap::WrapReverse,
-            },
-            grid_auto_flow: {
-                let raw = position_group.grid_auto_flow;
-                let dense = raw.contains(GridAutoFlowValue::DENSE);
-                match (raw.contains(GridAutoFlowValue::COLUMN), dense) {
-                    (false, false) => GridAutoFlow::Row,
-                    (false, true) => GridAutoFlow::RowDense,
-                    (true, false) => GridAutoFlow::Column,
-                    (true, true) => GridAutoFlow::ColumnDense,
-                }
-            },
-            aspect_auto: auto,
             collapses_as_flex_item: style.get_inherited_box().visibility
                 == VisibilityValue::Collapse
                 && box_.display.outside() != zgui_css::values::size::DisplayOutside::None,
+        }
+    }
+
+    /// The four `min-*`/`max-*` slots' measured values, where a keyword was written and the
+    /// content has been measured: minimum width and height, then maximum width and height.
+    pub(crate) fn min_max_with(&self, measured: MeasuredSizes) -> [Option<f32>; 4] {
+        if self.keywords.is_empty() {
+            return [None; 4];
+        }
+        let pick = |slot: Slot, sizes: Option<IntrinsicSizes>| match self.keywords.get(slot) {
+            Keyword::None => None,
+            Keyword::Min => sizes.map(|sizes| sizes.min),
+            Keyword::Max => sizes.map(|sizes| sizes.max),
         };
-        lowered.parent_dependency = lowered.parent_dependency_of_lengths();
-        lowered
-    }
-
-    /// Which axes of the containing block this style's own lengths resolve against.
-    ///
-    /// Width: the horizontal sizes and insets, and every margin and padding — CSS resolves all
-    /// eight against the containing block's *width*. Height: the vertical sizes and insets only.
-    /// Border widths cannot be percentages. Gaps, `flex-basis` and grid tracks are resolved by the
-    /// container's own algorithm against its own size and never through the child's question.
-    fn parent_dependency_of_lengths(&self) -> [bool; 2] {
-        let against = |raw: taffy::CompactLength| {
-            raw.is_calc()
-                || matches!(
-                    raw.tag(),
-                    taffy::CompactLength::PERCENT_TAG
-                        | taffy::CompactLength::FIT_CONTENT_PERCENT_TAG
-                )
-        };
-        let width = against(self.size.width.into_raw())
-            || against(self.min_size.width.into_raw())
-            || against(self.max_size.width.into_raw())
-            || against(self.inset.left.into_raw())
-            || against(self.inset.right.into_raw())
-            || against(self.margin.left.into_raw())
-            || against(self.margin.right.into_raw())
-            || against(self.margin.top.into_raw())
-            || against(self.margin.bottom.into_raw())
-            || against(self.padding.left.into_raw())
-            || against(self.padding.right.into_raw())
-            || against(self.padding.top.into_raw())
-            || against(self.padding.bottom.into_raw());
-        let height = against(self.size.height.into_raw())
-            || against(self.min_size.height.into_raw())
-            || against(self.max_size.height.into_raw())
-            || against(self.inset.top.into_raw())
-            || against(self.inset.bottom.into_raw());
-        [width, height]
-    }
-
-    /// `width`/`height` with any keyword substituted from `measured`.
-    ///
-    /// `measured` is stated the way a size in the style is stated — the caller has already taken
-    /// [`LayoutStyle::intrinsic_inset`] off the raw measurement.
-    pub(crate) fn size_with(&self, measured: MeasuredSizes) -> Size<Dimension> {
-        if self.keywords.is_empty() {
-            return self.size;
-        }
-        Size {
-            width: substituted(
-                self.size.width,
-                self.keywords.get(Slot::Width),
-                measured.horizontal,
-            ),
-            height: substituted(
-                self.size.height,
-                self.keywords.get(Slot::Height),
-                measured.vertical,
-            ),
-        }
-    }
-
-    /// `min-width`/`min-height` with any keyword substituted from `measured`.
-    pub(crate) fn min_size_with(&self, measured: MeasuredSizes) -> Size<Dimension> {
-        if self.keywords.is_empty() {
-            return self.min_size;
-        }
-        Size {
-            width: substituted(
-                self.min_size.width,
-                self.keywords.get(Slot::MinWidth),
-                measured.horizontal,
-            ),
-            height: substituted(
-                self.min_size.height,
-                self.keywords.get(Slot::MinHeight),
-                measured.vertical,
-            ),
-        }
-    }
-
-    /// `max-width`/`max-height` with any keyword substituted from `measured`.
-    pub(crate) fn max_size_with(&self, measured: MeasuredSizes) -> Size<Dimension> {
-        if self.keywords.is_empty() {
-            return self.max_size;
-        }
-        Size {
-            width: substituted(
-                self.max_size.width,
-                self.keywords.get(Slot::MaxWidth),
-                measured.horizontal,
-            ),
-            height: substituted(
-                self.max_size.height,
-                self.keywords.get(Slot::MaxHeight),
-                measured.vertical,
-            ),
-        }
-    }
-
-    /// `flex-basis` with any keyword substituted from `measured`, which reads the inline axis.
-    pub(crate) fn flex_basis_with(&self, measured: MeasuredSizes) -> Dimension {
-        if self.keywords.is_empty() {
-            return self.flex_basis;
-        }
-        substituted(
-            self.flex_basis,
-            self.keywords.get(Slot::FlexBasis),
-            measured.horizontal,
-        )
+        [
+            pick(Slot::MinWidth, measured.horizontal),
+            pick(Slot::MinHeight, measured.vertical),
+            pick(Slot::MaxWidth, measured.horizontal),
+            pick(Slot::MaxHeight, measured.vertical),
+        ]
     }
 
     /// The ratio of width to height a box should keep, given its content's natural proportions.
@@ -478,27 +152,18 @@ impl LayoutStyle {
     }
 }
 
-/// One size slot's value, the keyword substituted where one was written.
-fn substituted(packed: Dimension, keyword: Keyword, measured: Option<IntrinsicSizes>) -> Dimension {
-    match keyword {
-        Keyword::None => packed,
-        Keyword::Min => measured.map_or(Dimension::AUTO, |sizes| Dimension::length(sizes.min)),
-        Keyword::Max => measured.map_or(Dimension::AUTO, |sizes| Dimension::length(sizes.max)),
+/// The plain length of a value, or zero for a percentage or `calc()`.
+trait ValueOrZero {
+    fn value_or_zero(self) -> f32;
+}
+
+impl ValueOrZero for cephal::style::LengthPercentage {
+    fn value_or_zero(self) -> f32 {
+        if self.is_length() { self.value() } else { 0.0 }
     }
 }
 
-/// Picks the left-to-right answer or the right-to-left one.
-fn flow<T>(rtl: bool, ltr: T, rtl_answer: T) -> T {
-    if rtl { rtl_answer } else { ltr }
-}
-
-/// The plain lengths of a rect, per axis; percentages and `calc()` contribute nothing.
-fn lengths_of(rect: &Rect<LengthPercentage>) -> Size<f32> {
-    use taffy::ResolveOrZero;
-    rect.resolve_or_zero(None::<f32>, |_, _| 0.0).sum_axes()
-}
-
-/// Which measurement a `width`-family value substitutes.
+/// Which measurement a `min-width`-family value substitutes.
 fn keyword_of_size(value: &SizeValue) -> Keyword {
     match value {
         SizeValue::MinContent => Keyword::Min,
@@ -522,8 +187,7 @@ fn keyword_of_max(value: &MaxSizeValue) -> Keyword {
 
 #[cfg(test)]
 mod tests {
-    use taffy::prelude::TaffyAuto;
-    use taffy::{Dimension, Float, Rect};
+    use cephal::style::{Dimension, Float, LengthPercentageAuto};
     use zgui_css::StyleDraft;
     use zgui_css::values::length::{Length, LengthPercentage as CssLp, NonNegative};
     use zgui_css::values::size::{FloatValue, InsetValue, PositionValue, SizeValue};
@@ -531,6 +195,7 @@ mod tests {
 
     use crate::style::calc::CalcTable;
     use crate::style::convert::length::IntrinsicSizes;
+    use crate::style::grid::idents::IdentTable;
     use crate::style::{DeviceStyle, MeasuredSizes};
 
     use super::LayoutStyle;
@@ -541,53 +206,31 @@ mod tests {
         let style = draft.build();
         let mut calc = CalcTable::default();
         calc.set_scale(1.0);
-        LayoutStyle::lower(&style, DeviceStyle::default(), &mut calc)
+        let mut idents = IdentTable::default();
+        LayoutStyle::lower(&style, DeviceStyle::default(), &mut calc, &mut idents)
     }
 
     fn length(px: f32) -> CssLp {
         CssLp::new_length(Length::new(px))
     }
 
-    /// A style of fixed lengths answers the same whatever its containing block is.
     #[test]
-    fn fixed_lengths_depend_on_no_containing_block_axis() {
-        let lowered = lower_with(|draft| {
-            draft.position_group().width = SizeValue::LengthPercentage(NonNegative(length(40.0)));
-            draft.position_group().height = SizeValue::LengthPercentage(NonNegative(length(20.0)));
-        });
-        assert_eq!(lowered.parent_dependency, [false, false]);
-    }
-
-    /// A vertical padding percentage resolves against the containing block's width, so it is a
-    /// dependency on the width axis and on no other.
-    #[test]
-    fn a_percentage_names_the_axis_it_resolves_against() {
-        let lowered = lower_with(|draft| {
-            draft.padding().padding_top = NonNegative(zgui_css::values::length::percent(0.02));
-        });
-        assert_eq!(lowered.parent_dependency, [true, false]);
-        let lowered = lower_with(|draft| {
-            draft.position_group().height =
-                SizeValue::LengthPercentage(NonNegative(zgui_css::values::length::percent(0.5)));
-        });
-        assert_eq!(lowered.parent_dependency, [false, true]);
-    }
-
-    #[test]
-    fn a_content_keyword_substitutes_the_measurement_at_read_time() {
+    fn a_min_max_keyword_substitutes_the_measurement_at_read_time() {
         let lowered = lower_with(|draft| {
             draft.position_group().width = SizeValue::MinContent;
             draft.position_group().min_height = SizeValue::MaxContent;
         });
         assert_eq!(
-            lowered.size.width,
-            Dimension::AUTO,
-            "the packed value defers"
+            lowered.template.size.width,
+            Dimension::MIN_CONTENT,
+            "the engine resolves it"
         );
-
-        let unmeasured = lowered.size_with(MeasuredSizes::default());
-        assert_eq!(unmeasured.width, Dimension::AUTO);
-
+        assert_eq!(
+            lowered.template.min_size.height,
+            LengthPercentageAuto::AUTO,
+            "deferred"
+        );
+        assert_eq!(lowered.min_max_with(MeasuredSizes::default()), [None; 4]);
         let sizes = IntrinsicSizes {
             min: 30.0,
             max: 90.0,
@@ -596,20 +239,14 @@ mod tests {
             horizontal: Some(sizes),
             vertical: Some(sizes),
         };
-        assert_eq!(lowered.size_with(measured).width, Dimension::length(30.0));
         assert_eq!(
-            lowered.min_size_with(measured).height,
-            Dimension::length(90.0)
-        );
-        assert_eq!(
-            lowered.size_with(measured).height,
-            Dimension::AUTO,
-            "a keyword-free slot keeps its packed value"
+            lowered.min_max_with(measured),
+            [None, Some(90.0), None, None]
         );
     }
 
     #[test]
-    fn a_style_with_no_keywords_reads_the_packed_sizes_straight_through() {
+    fn a_style_with_no_keywords_substitutes_nothing() {
         let lowered = lower_with(|draft| {
             draft.position_group().width = SizeValue::LengthPercentage(NonNegative(length(24.0)));
         });
@@ -618,7 +255,8 @@ mod tests {
             horizontal: Some(IntrinsicSizes { min: 1.0, max: 2.0 }),
             vertical: None,
         };
-        assert_eq!(lowered.size_with(measured).width, Dimension::length(24.0));
+        assert_eq!(lowered.min_max_with(measured), [None; 4]);
+        assert_eq!(lowered.template.size.width, Dimension::length(24.0));
     }
 
     #[test]
@@ -626,15 +264,15 @@ mod tests {
         let lowered = lower_with(|draft| {
             draft.position_group().left = InsetValue::LengthPercentage(length(10.0));
         });
-        assert_eq!(lowered.inset, Rect::auto());
+        assert_eq!(lowered.template.inset.left, LengthPercentageAuto::AUTO);
 
         let positioned = lower_with(|draft| {
             draft.box_group().position = PositionValue::Relative;
             draft.position_group().left = InsetValue::LengthPercentage(length(10.0));
         });
         assert_eq!(
-            positioned.inset.left,
-            taffy::LengthPercentageAuto::length(10.0)
+            positioned.template.inset.left,
+            LengthPercentageAuto::length(10.0)
         );
     }
 
@@ -643,13 +281,13 @@ mod tests {
         let ltr = lower_with(|draft| {
             draft.box_group().float = FloatValue::InlineStart;
         });
-        assert_eq!(ltr.float, Float::Left);
+        assert_eq!(ltr.template.float, Float::Left);
 
         let rtl = lower_with(|draft| {
             draft.box_group().float = FloatValue::InlineStart;
             draft.inherited_box().direction = CssDirection::Rtl;
         });
-        assert_eq!(rtl.float, Float::Right);
+        assert_eq!(rtl.template.float, Float::Right);
     }
 
     #[test]

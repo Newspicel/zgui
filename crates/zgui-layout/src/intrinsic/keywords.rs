@@ -8,9 +8,6 @@
 use zgui_css::ComputedStyle;
 use zgui_css::values::size::{MaxSizeValue, SizeValue};
 
-use crate::axis::Axis;
-use crate::style::StyleRef;
-
 /// Whether one size value needs the content measured before it means anything.
 pub fn size_needs_measuring(value: &SizeValue) -> bool {
     matches!(
@@ -43,28 +40,13 @@ pub fn max_size_needs_measuring(value: &MaxSizeValue) -> bool {
 /// internally consistent and nothing anywhere reporting that a measurement was skipped.
 pub fn axes_of(style: &ComputedStyle) -> [bool; 2] {
     let position = style.get_position();
+    // `width` and `height` keywords the engine resolves itself; `min-*` and `max-*` take no
+    // keyword in its vocabulary and are measured here.
     [
-        size_needs_measuring(&position.width)
-            || size_needs_measuring(&position.min_width)
-            || max_size_needs_measuring(&position.max_width),
-        size_needs_measuring(&position.height)
-            || size_needs_measuring(&position.min_height)
+        size_needs_measuring(&position.min_width) || max_size_needs_measuring(&position.max_width),
+        size_needs_measuring(&position.min_height)
             || max_size_needs_measuring(&position.max_height),
     ]
-}
-
-/// The same question asked of a box the layout algorithms are already looking at.
-pub fn axes_needing_measurement(style: StyleRef<'_>) -> [bool; 2] {
-    axes_of(style.style())
-}
-
-/// Whether the given axis needs measuring.
-pub fn needs_measurement(style: StyleRef<'_>, axis: Axis) -> bool {
-    let axes = axes_needing_measurement(style);
-    match axis {
-        Axis::Horizontal => axes[0],
-        Axis::Vertical => axes[1],
-    }
 }
 
 #[cfg(test)]

@@ -50,6 +50,8 @@ counters! {
 
     /// Nodes whose size or position was computed again.
     NodesRelaidOut => nodes_relaid_out, Group::BackendNeutral;
+    /// Boxes whose unrounded layout result moved in the last pass.
+    NodesChanged => nodes_changed, Group::BackendNeutral;
 
     /// Boxes the `overflow: auto` fixpoint examined for a gutter decision.
     ///

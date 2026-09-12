@@ -10,13 +10,5 @@ reactive_graph = { version = "=0.2.14" }
 reactive_stores = "=0.4.3"
 any_spawner = "=0.3.0"
 wgpu = "29.0.4"
-# PLANTED VIOLATION: losing `float_layout` deletes floats with no error at all.
-taffy = { version = "0.12.2", default-features = false, features = [
-    "std",
-    "flexbox",
-    "grid",
-    "block_layout",
-    "content_size",
-    "calc",
-    "detailed_layout_info",
-] }
+# PLANTED VIOLATION: losing `grid` lays every grid out as a block with no error at all.
+cephal = { version = "0.1.0", default-features = false, features = ["block", "flex"] }

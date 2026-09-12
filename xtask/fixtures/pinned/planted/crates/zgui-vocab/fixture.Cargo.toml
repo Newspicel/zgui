@@ -10,4 +10,4 @@ zgui-interned = { path = "../zgui-interned", version = "0.1.0" }
 
 [dev-dependencies]
 # PLANTED VIOLATION: a development dependency is still something the crate can see.
-taffy = "0.12.2"
+cephal = "0.1.0"

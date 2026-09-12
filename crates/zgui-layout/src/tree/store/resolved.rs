@@ -89,13 +89,11 @@ fn inset(rect: Rect<DevicePx, Device>, edges: Edges<DevicePx>) -> Rect<DevicePx,
 /// Restates the engine's result in this framework's own units.
 fn resolve(entry: &BoxLayout) -> ResolvedLayout {
     let layout = &entry.snapped;
+    let content = BoxLayout::content_size_of(layout, entry.scroll_container);
     ResolvedLayout {
         origin: Point::new(DevicePx(layout.location.x), DevicePx(layout.location.y)),
         size: Size::new(DevicePx(layout.size.width), DevicePx(layout.size.height)),
-        content_size: Size::new(
-            DevicePx(layout.content_size.width),
-            DevicePx(layout.content_size.height),
-        ),
+        content_size: Size::new(DevicePx(content.width), DevicePx(content.height)),
         scrollbar_size: Size::new(
             DevicePx(layout.scrollbar_size.width),
             DevicePx(layout.scrollbar_size.height),
@@ -110,7 +108,7 @@ fn resolve(entry: &BoxLayout) -> ResolvedLayout {
 }
 
 /// Restates the engine's four sides in this framework's own units.
-fn edges(rect: taffy::Rect<f32>) -> Edges<DevicePx> {
+fn edges(rect: cephal::Rect<f32>) -> Edges<DevicePx> {
     Edges {
         top: DevicePx(rect.top),
         right: DevicePx(rect.right),

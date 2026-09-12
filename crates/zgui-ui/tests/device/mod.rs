@@ -37,6 +37,23 @@ pub fn device_lock() -> MutexGuard<'static, ()> {
 /// Every frame of one run, in the order they were drawn.
 pub type Log = Arc<Mutex<Vec<Frame>>>;
 
+/// Whether frames are drawn with the damage the application asked for.
+static REAL_DAMAGE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Draws every frame with the application's own damage set from now on.
+///
+/// The default redraws the whole window every frame, which answers what the document *contains*.
+/// A fixture asking what a partial repaint left on the screen wants the real damage, and reads
+/// the composed target rather than the presented one.
+#[allow(dead_code, reason = "not every fixture asks for it")]
+pub fn use_real_damage() {
+    REAL_DAMAGE.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
+fn real_damage() -> bool {
+    REAL_DAMAGE.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// The real renderer, with each frame recorded beside it.
 struct Recording {
     /// The renderer the application draws through.
@@ -65,7 +82,13 @@ impl Renderer for Recording {
     ) -> zgui::render::FrameOutcome {
         // Over the whole surface, whatever the application asked for. The question is what the
         // gallery *contains*, and a scissored frame answers it only for the rectangle it redrew.
-        let outcome = self.renderer.draw(scene, &zgui::bits::DamageSet::full());
+        // The real damage set when a fixture asks for it: the composed target then retains what
+        // earlier frames drew, which is what a surface shows.
+        let outcome = if real_damage() {
+            self.renderer.draw(scene, _damage)
+        } else {
+            self.renderer.draw(scene, &zgui::bits::DamageSet::full())
+        };
         let recorded = Frame::record(&mut self.renderer, scene, &outcome);
         self.log
             .lock()

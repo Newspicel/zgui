@@ -173,12 +173,10 @@ fn the_final_pass_is_told_that_it_is_the_one_being_kept() {
 
 #[test]
 fn the_atomic_memo_answers_a_repeated_constraint_without_a_second_nested_layout() {
-    // An atomic inline costs a whole nested layout per measurement, and the algorithms measure it
-    // at the same constraint several times over. Without the memo those repeats are real layouts.
-    //
-    // The container is a flex one on purpose: block layout measures its child once, so a block
-    // fixture never asks the same question twice and the memo is never consulted for an answer it
-    // holds. A `misses > 0` assertion over that fixture passes while the memo does nothing.
+    // An atomic inline costs a whole nested layout per measurement. Within one pass the kept
+    // pass adopts the probe's boxes and asks nothing again, so the repeats come from the next
+    // pass: the context holding the line is invalidated, the atom is not, and the same
+    // questions arrive at it.
     let fixture = Fixture::new(
         Element::new("root").children(vec![
             Element::new("cell").children(vec![Element::new("item").text("one")]),
@@ -189,23 +187,38 @@ fn the_atomic_memo_answers_a_repeated_constraint_without_a_second_nested_layout(
     );
     let mut store = fixture.box_tree();
     let mut content = measurer();
+    let cell = {
+        let mut tree = zgui_layout::tree::LayoutTree::new(
+            &mut store,
+            &mut content,
+            zgui_layout::style::DeviceStyle::default(),
+        );
+        assert!(tree.layout_root(cephal::Size {
+            width: 400.0,
+            height: 300.0
+        }));
+        assert!(
+            tree.atomic_memo().misses() > 0,
+            "no atomic inline was measured at all, so the memo is untested"
+        );
+        let root = tree.store().root().expect("a root");
+        let cell = tree.store().node(root).children[0];
+        tree.store().node(cell).children[0]
+    };
+    zgui_layout::tree::dirty::mark_dirty(&mut store, cell);
     let mut tree = zgui_layout::tree::LayoutTree::new(
         &mut store,
         &mut content,
         zgui_layout::style::DeviceStyle::default(),
     );
-    assert!(tree.layout_root(taffy::Size {
+    assert!(tree.layout_root(cephal::Size {
         width: 400.0,
         height: 300.0
     }));
     let memo = tree.atomic_memo();
     assert!(
-        memo.misses() > 0,
-        "no atomic inline was measured at all, so the memo is untested"
-    );
-    assert!(
         memo.hits() > 0,
-        "the atomic inline was measured {} times and the memo answered none of them, \
+        "the atomic inline was measured {} times again and the memo answered none of them, \
          so every repeat cost a whole nested layout",
         memo.misses()
     );

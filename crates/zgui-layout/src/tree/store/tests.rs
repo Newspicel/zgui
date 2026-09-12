@@ -16,7 +16,9 @@ fn hot_box_records_stay_within_the_memory_budget() {
     let node = core::mem::size_of::<BoxNode>();
     let layout = core::mem::size_of::<BoxLayout>();
     assert!(node <= 112, "BoxNode grew to {node} bytes");
-    assert!(layout <= 480, "BoxLayout grew to {layout} bytes");
+    // The engine's cache is held inline: one final answer and three size answers, each a
+    // complete question and its answer, before anything spills to the heap.
+    assert!(layout <= 896, "BoxLayout grew to {layout} bytes");
 }
 
 #[test]

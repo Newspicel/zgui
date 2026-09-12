@@ -140,7 +140,7 @@ fn subtree_disjoint_is_independent_of_the_damage_set() {
                 &mut content,
                 zgui_layout::DeviceStyle::default(),
             );
-            assert!(tree.layout_root(taffy::Size {
+            assert!(tree.layout_root(cephal::Size {
                 width: 200.0,
                 height: 200.0
             }));

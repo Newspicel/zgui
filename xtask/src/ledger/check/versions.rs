@@ -34,21 +34,11 @@ const DUPLICATE_LIMITS: [(&str, usize); 4] = [
     ("ash", 1),
 ];
 
-/// The exact feature set the layout engine is built with.
+/// The exact feature set the incremental layout engine is built with.
 ///
-/// The seven behavioural features are what the box tree relies on, and `taffy_tree` is
-/// deliberately absent because we own the tree. `std` is here because taffy 0.12.2 does not
-/// compile without it once `detailed_layout_info` and `grid` are on.
-const TAFFY_FEATURES: [&str; 8] = [
-    "block_layout",
-    "calc",
-    "content_size",
-    "detailed_layout_info",
-    "flexbox",
-    "float_layout",
-    "grid",
-    "std",
-];
+/// The three algorithms the box tree dispatches to, and nothing else: `parallel` would pull in a
+/// second thread pool beside the workspace's own, and `stats` would count on every build.
+const CEPHAL_FEATURES: [&str; 3] = ["block", "flex", "grid"];
 
 /// Features of the reactive graph that must be on, and off.
 const REACTIVE_ON: &str = "effects";
@@ -91,23 +81,24 @@ pub(crate) fn check(tree: &Tree) -> Report {
         }
     }
 
-    match find(&workspace, "taffy") {
-        None => report.skip("`taffy` is not declared yet".to_owned()),
+    match find(&workspace, "cephal") {
+        None => report.skip("`cephal` is not declared yet".to_owned()),
         Some(dependency) => {
             if dependency.default_features != Some(false) {
                 report.violation(
                     at.clone(),
-                    "`taffy` must set `default-features = false`: we own the tree".to_owned(),
+                    "`cephal` must set `default-features = false`: the feature set is pinned"
+                        .to_owned(),
                 );
             }
             let mut declared = dependency.features.clone();
             declared.sort();
-            if declared != TAFFY_FEATURES {
+            if declared != CEPHAL_FEATURES {
                 report.violation(
                     at.clone(),
                     format!(
-                        "`taffy` features must be exactly [{}], found [{}]",
-                        TAFFY_FEATURES.join(", "),
+                        "`cephal` features must be exactly [{}], found [{}]",
+                        CEPHAL_FEATURES.join(", "),
                         declared.join(", ")
                     ),
                 );

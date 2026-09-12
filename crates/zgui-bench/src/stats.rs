@@ -160,7 +160,7 @@ pub(crate) fn report(size: &str, phase: &str, boxes: usize, fragments: usize, ma
 
     // The roll-up. `lay_out` and `build_boxes` are called from two places — once from the frame
     // and again from every observation-delivery pass — and only the frame's own call is bracketed
-    // by marks, so the naive per-mark table charges a re-layout's taffy pass to whichever mark
+    // by marks, so the naive per-mark table charges a re-layout's engine pass to whichever mark
     // happened to precede it. This walks the frames and separates the two.
     let mut per_frame: Vec<(f64, f64, f64, f64, usize)> = Vec::new();
     let mut open: Option<(f64, f64, f64, f64, usize)> = None;
@@ -177,7 +177,7 @@ pub(crate) fn report(size: &str, phase: &str, boxes: usize, fragments: usize, ma
         match here.stage.as_str() {
             // The frame's own build, bracketed on both sides.
             "b.why" if next.stage == "f.layout" => frame.0 += gap,
-            // A re-layout's build and taffy pass together, with no mark between them.
+            // A re-layout's build and engine pass together, with no mark between them.
             "b.why" => {
                 frame.0 += gap;
                 frame.4 += 1;

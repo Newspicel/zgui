@@ -261,7 +261,7 @@ pub(crate) struct Ask {
     /// The width the box was told it had, if it was told one.
     pub(crate) known_width: Option<f32>,
     /// The space it was told was available on the inline axis.
-    pub(crate) available_width: taffy::AvailableSpace,
+    pub(crate) available_width: cephal::AvailableSpace,
     /// Whether the answer was going to be kept.
     pub(crate) final_pass: bool,
 }
@@ -270,7 +270,7 @@ impl Ask {
     /// The definite width this ask offered, if it offered one.
     pub(crate) fn definite_width(&self) -> Option<f32> {
         match self.available_width {
-            taffy::AvailableSpace::Definite(width) => Some(width),
+            cephal::AvailableSpace::Definite(width) => Some(width),
             _ => None,
         }
     }
@@ -437,7 +437,7 @@ pub(crate) fn lay_out_at_scale(
     };
     let mut tree = LayoutTree::new(store, content, device);
     assert!(
-        tree.layout_root(taffy::Size { width, height }),
+        tree.layout_root(cephal::Size { width, height }),
         "the fixture generated no root box"
     );
 }

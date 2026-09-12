@@ -1,6 +1,6 @@
 //! The bounded loop that settles container queries.
 
-use taffy::Size;
+use cephal::Size;
 
 use crate::measure::MeasureContent;
 use crate::tree::LayoutTree;
@@ -66,7 +66,7 @@ pub fn run<C: MeasureContent>(
 
 #[cfg(test)]
 mod tests {
-    use taffy::Size;
+    use cephal::Size;
     use zgui_arena::DocumentId;
     use zgui_css::StyleDraft;
 

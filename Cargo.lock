@@ -690,6 +690,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "cephal"
+version = "0.1.0"
+
+[[package]]
 name = "cexpr"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1596,12 +1600,6 @@ checksum = "fdf242682df893b86f33a73828fb09ca4b2d3bb6cc95249707fc684d27484b91"
 dependencies = [
  "bitflags 2.13.1",
 ]
-
-[[package]]
-name = "grid"
-version = "1.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b40ca9252762c466af32d0b1002e91e4e1bc5398f77455e55474deb466355ff5"
 
 [[package]]
 name = "guardian"
@@ -3053,11 +3051,11 @@ version = "0.1.0"
 dependencies = [
  "accesskit",
  "accesskit_winit",
+ "cephal",
  "parley",
  "reactive_graph",
  "reactive_stores",
  "stylo",
- "taffy",
  "thiserror 2.0.19",
  "tracing",
  "vello",
@@ -4082,16 +4080,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
-]
-
-[[package]]
-name = "taffy"
-version = "0.12.2"
-dependencies = [
- "arrayvec",
- "grid",
- "serde",
- "slotmap",
 ]
 
 [[package]]
@@ -5949,10 +5937,10 @@ dependencies = [
 name = "zgui-layout"
 version = "0.1.0"
 dependencies = [
+ "cephal",
  "rayon",
  "rustc-hash 2.1.3",
  "smallvec",
- "taffy",
  "tracing",
  "zgui-arena",
  "zgui-bits",

@@ -29,7 +29,6 @@ fails the build.
 | `crates/zgui-geom/src/snap/stroke.rs` | the GPUI project | Apache-2.0 |
 | `crates/zgui-scene/src/order/tree.rs` | the GPUI project | Apache-2.0 |
 | `crates/zgui-color/src/gamma.rs` | the Windows Terminal project | MIT |
-| `crates/zgui-layout/src/inline/leaf_shell.rs` | the taffy project | MIT |
 | `crates/zgui-wgsl/src/wgsl/sdf.wgsl` | the GPUI project | Apache-2.0 |
 | `crates/zgui-wgsl/src/wgsl/blur.wgsl` | the GPUI project | Apache-2.0 |
 | `crates/zgui-wgsl/src/wgsl/paint.wgsl` | the GPUI project | Apache-2.0 |

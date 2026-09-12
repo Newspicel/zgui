@@ -8,8 +8,8 @@
 //! the paragraph identifiers workers recorded as markers, in request order, and reconstructing
 //! the retain-and-release accounting from the snapshots taken before the batch.
 
+use cephal::tree::{ChildRequest, LayoutOutput, LayoutTree as EngineTree};
 use rustc_hash::FxHashMap;
-use taffy::{ChildRequest, LayoutOutput, LayoutPartialTree};
 use zgui_dom::side::BoxKey;
 use zgui_profile::{Counter, counter};
 use zgui_text::{ParagraphContent, ParagraphKey};
@@ -46,6 +46,9 @@ const MIN_COLD_NODES: usize = 8;
 const MIN_BATCH_BOXES: usize = 256;
 
 /// What one worker's chunk was planned to touch.
+/// What one worker hands back: its answers in request order, and the boxes it wrote.
+type Outcome = (Vec<(usize, LayoutOutput)>, Vec<(BoxKey, cephal::Layout)>);
+
 #[derive(Debug, Default)]
 struct ChunkPlan {
     /// Every box in the chunk's subtrees, hot and cold alike: state access covers cache hits.
@@ -96,9 +99,7 @@ impl<'a, C: MeasureContent> LayoutTree<'a, C> {
             let mut cold: rustc_hash::FxHashSet<u64> = rustc_hash::FxHashSet::default();
             for request in requests {
                 let node = u64::from(request.node);
-                if !cold.contains(&node)
-                    && taffy::CacheTree::cache_get(self, request.node, &request.input).is_none()
-                {
+                if !cold.contains(&node) && !cephal::compute::is_cached(self, request) {
                     cold.insert(node);
                 }
             }
@@ -108,7 +109,7 @@ impl<'a, C: MeasureContent> LayoutTree<'a, C> {
             results.extend(
                 requests
                     .iter()
-                    .map(|request| self.compute_child_layout(request.node, request.input)),
+                    .map(|request| self.compute_child_layout(request.node, request.input, None)),
             );
             return;
         }
@@ -122,7 +123,7 @@ impl<'a, C: MeasureContent> LayoutTree<'a, C> {
         // flex-basis site asks two questions per item — and every question about a subtree has
         // to run on the worker that owns it. Nodes are grouped in first-appearance order and
         // chunked by how many requests they carry.
-        let mut node_order: Vec<taffy::NodeId> = Vec::new();
+        let mut node_order: Vec<cephal::NodeId> = Vec::new();
         let mut node_requests: FxHashMap<u64, Vec<usize>> = FxHashMap::default();
         for (index, request) in requests.iter().enumerate() {
             let slot = node_requests.entry(u64::from(request.node)).or_default();
@@ -153,7 +154,7 @@ impl<'a, C: MeasureContent> LayoutTree<'a, C> {
 
         let wanted = pool.width().min(node_order.len() / 2).max(1);
         let per_chunk = requests.len().div_ceil(wanted);
-        let mut chunks: Vec<(Vec<taffy::NodeId>, Vec<usize>)> = Vec::new();
+        let mut chunks: Vec<(Vec<cephal::NodeId>, Vec<usize>)> = Vec::new();
         for node in node_order {
             let indices = node_requests
                 .get(&u64::from(node))
@@ -173,7 +174,7 @@ impl<'a, C: MeasureContent> LayoutTree<'a, C> {
             results.extend(
                 requests
                     .iter()
-                    .map(|request| self.compute_child_layout(request.node, request.input)),
+                    .map(|request| self.compute_child_layout(request.node, request.input, None)),
             );
             return;
         }
@@ -189,7 +190,7 @@ impl<'a, C: MeasureContent> LayoutTree<'a, C> {
                 // A node is cold for ownership purposes when any of its questions is.
                 let cold = held.iter().any(|&index| {
                     requests[index].node == node
-                        && taffy::CacheTree::cache_get(self, node, &requests[index].input).is_none()
+                        && !cephal::compute::is_cached(self, &requests[index])
                 });
                 self.plan_subtree(from_node_id(node), cold, &mut plan, &mut snapshots);
             }
@@ -202,7 +203,7 @@ impl<'a, C: MeasureContent> LayoutTree<'a, C> {
             results.extend(
                 requests
                     .iter()
-                    .map(|request| self.compute_child_layout(request.node, request.input)),
+                    .map(|request| self.compute_child_layout(request.node, request.input, None)),
             );
             return;
         }
@@ -225,7 +226,7 @@ impl<'a, C: MeasureContent> LayoutTree<'a, C> {
             results.extend(
                 requests
                     .iter()
-                    .map(|request| self.compute_child_layout(request.node, request.input)),
+                    .map(|request| self.compute_child_layout(request.node, request.input, None)),
             );
             return;
         }
@@ -244,7 +245,7 @@ impl<'a, C: MeasureContent> LayoutTree<'a, C> {
         let mut ordered: Vec<Option<LayoutOutput>> = vec![None; requests.len()];
         for &index in &pinned {
             let request = requests[index];
-            ordered[index] = Some(self.compute_child_layout(request.node, request.input));
+            ordered[index] = Some(self.compute_child_layout(request.node, request.input, None));
         }
 
         // Carve one exclusive borrow per planned box out of the layout column. The sort is what
@@ -259,6 +260,7 @@ impl<'a, C: MeasureContent> LayoutTree<'a, C> {
         let sorted: Vec<BoxKey> = tagged.iter().map(|&(key, _)| key).collect();
 
         let device = self.device;
+        let generation = self.generation;
         let (column, structure) = self.store.get_mut().split_for_batch();
         let mut tables: Vec<FxHashMap<u32, &mut BoxLayout>> = plans
             .iter()
@@ -269,13 +271,12 @@ impl<'a, C: MeasureContent> LayoutTree<'a, C> {
             tables[chunk as usize].insert(key.index(), state);
         }
 
-        let mut outcomes: Vec<Option<Vec<(usize, LayoutOutput)>>> =
-            (0..chunk_count).map(|_| None).collect();
+        let mut outcomes: Vec<Option<Outcome>> = (0..chunk_count).map(|_| None).collect();
         pool.scope(|scope| {
             for (((measurer, (_, held)), table), outcome) in measurers
                 .iter_mut()
                 .zip(chunks.iter())
-                .zip(tables.into_iter())
+                .zip(tables)
                 .zip(outcomes.iter_mut())
             {
                 scope.spawn(move |_| {
@@ -288,18 +289,21 @@ impl<'a, C: MeasureContent> LayoutTree<'a, C> {
                         custom: &crate::custom::NoCustomLayout,
                         has_custom: false,
                         parallel: None,
+                        generation,
+                        speculation: 0,
+                        touched: Vec::new(),
                     };
-                    *outcome = Some(
-                        held.iter()
-                            .map(|&index| {
-                                let request = requests[index];
-                                (
-                                    index,
-                                    tree.compute_child_layout(request.node, request.input),
-                                )
-                            })
-                            .collect(),
-                    );
+                    let outputs = held
+                        .iter()
+                        .map(|&index| {
+                            let request = requests[index];
+                            (
+                                index,
+                                tree.compute_child_layout(request.node, request.input, None),
+                            )
+                        })
+                        .collect();
+                    *outcome = Some((outputs, tree.touched));
                 });
             }
         });
@@ -307,9 +311,11 @@ impl<'a, C: MeasureContent> LayoutTree<'a, C> {
         // Every result back into request order, then the paragraph identifiers, then the
         // measurers — the same sequence a serial pass produces.
         for outcome in outcomes {
-            for (index, output) in outcome.expect("every spawned worker finished") {
+            let (outputs, touched) = outcome.expect("every spawned worker finished");
+            for (index, output) in outputs {
                 ordered[index] = Some(output);
             }
+            self.touched.extend(touched);
         }
         results.extend(
             ordered
@@ -352,20 +358,18 @@ impl<'a, C: MeasureContent> LayoutTree<'a, C> {
                         plan.paragraphs.push(mark.key);
                     }
                 }
-            } else if cold {
-                if let Some(flattened) = self.store.flattened(key) {
-                    let generated = flattened.generated();
-                    if generated.items.is_empty() {
-                        let content = ParagraphContent {
-                            text: &generated.text,
-                            map: &generated.map,
-                            runs: &generated.runs,
-                            boxes: &[],
-                            paragraph: &generated.paragraph,
-                            scale,
-                        };
-                        plan.paragraphs.push(generated.key(&content));
-                    }
+            } else if cold && let Some(flattened) = self.store.flattened(key) {
+                let generated = flattened.generated();
+                if generated.items.is_empty() {
+                    let content = ParagraphContent {
+                        text: &generated.text,
+                        map: &generated.map,
+                        runs: &generated.runs,
+                        boxes: &[],
+                        paragraph: &generated.paragraph,
+                        scale,
+                    };
+                    plan.paragraphs.push(generated.key(&content));
                 }
             }
             stack.extend(structure.node(key).children.iter().copied());

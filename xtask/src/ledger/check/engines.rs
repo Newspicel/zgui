@@ -35,7 +35,7 @@ const LEDGER: &[(&str, &[&str])] = &[
     // itself may not: the firewall is worth nothing if two of its three names go unpoliced.
     ("app_units", &["zgui-css", "zgui-dom", "zgui-style"]),
     ("euclid", &["zgui-css", "zgui-dom", "zgui-style"]),
-    ("taffy", &["zgui-layout"]),
+    ("cephal", &["zgui-layout"]),
     // A parser and nothing else: it reads an SVG document into a tree of paths, paints and clips
     // and draws none of it. That is why only the crate that owns the parse boundary may name it —
     // a document is mapped onto this framework's own vector model there, and both path rasterisers

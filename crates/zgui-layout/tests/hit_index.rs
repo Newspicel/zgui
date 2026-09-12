@@ -47,7 +47,7 @@ fn a_transform_transition_updates_only_its_own_subtree_in_the_hit_index() {
             &mut content,
             zgui_layout::DeviceStyle::default(),
         );
-        assert!(tree.layout_root(taffy::Size {
+        assert!(tree.layout_root(cephal::Size {
             width: 300.0,
             height: 800.0
         }));

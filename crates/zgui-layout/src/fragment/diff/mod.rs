@@ -680,7 +680,7 @@ impl<D: FrameDirty> Pass<'_, '_, D> {
         child: BoxKey,
         placed: &Placed,
         generator: Option<zgui_dom::NodeKey>,
-    ) -> Option<(rigid::Move, taffy::Layout)> {
+    ) -> Option<(rigid::Move, cephal::Layout)> {
         let owed = self.owed_by(child, generator);
         if owed.own.intersects(ENTERS) || owed.subtree.intersects(ENTERS) {
             return None;
@@ -697,7 +697,7 @@ impl<D: FrameDirty> Pass<'_, '_, D> {
             && new.border == old.border
             && new.padding == old.padding
             && new.margin == old.margin
-            && new.content_size == old.content_size
+            && new.scrollable_overflow_rect == old.scrollable_overflow_rect
             && new.scrollbar_size == old.scrollbar_size;
         if !same_shape {
             return None;

@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-taffy = "0.12.2"
+cephal = "0.1.0"
 # PLANTED VIOLATION: only zgui-css, zgui-dom and zgui-style may name the style engine.
 stylo = "=0.19.0"
 # PLANTED VIOLATION: the engine's geometry is behind the same firewall as the engine itself,

@@ -30,10 +30,9 @@
 //! length. The answer just computed is deliberately kept, which is why this alone among the
 //! invalidators calls `BoxLayout::forget_cached_sizes`.
 
+use cephal::tree::{LayoutInput, LayoutTree as EngineTree, RequestedAxis, RunMode, SizingMode};
+use cephal::{AvailableSpace, Line, Size};
 use rustc_hash::FxHashMap;
-use taffy::{
-    AvailableSpace, LayoutInput, LayoutPartialTree, RequestedAxis, RunMode, Size, SizingMode,
-};
 use zgui_dom::side::BoxKey;
 
 use crate::axis::Axis;
@@ -87,7 +86,9 @@ pub fn run<C: MeasureContent>(tree: &mut LayoutTree<'_, C>, root: BoxKey) {
                 tree.store_mut().set_intrinsic(key, axis, sizes);
             }
         }
-        tree.store_mut().state_mut(key).forget_cached_sizes();
+        // The probes were answered while the keyword still read as `auto`; the box's style is
+        // about to change under it, so what it holds is not the answer the pass will need.
+        crate::tree::dirty::mark_dirty(tree.store_mut(), key);
     }
 }
 
@@ -177,10 +178,13 @@ fn probe<C: MeasureContent>(
                 Axis::Vertical => RequestedAxis::Vertical,
             },
             known_dimensions: Size::NONE,
+            known_dimensions_are_definite: Size::TRUE,
             parent_size: Size::NONE,
             available_space: available,
-            vertical_margins_are_collapsible: taffy::Line::FALSE,
+            vertical_margins_are_collapsible: Line::FALSE,
+            context_key: 0,
         },
+        None,
     );
     match axis {
         Axis::Horizontal => output.size.width,

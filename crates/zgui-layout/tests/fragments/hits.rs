@@ -211,7 +211,7 @@ fn a_box_taken_out_of_the_tree_stops_answering_where_it_used_to_be() {
             &mut content,
             zgui_layout::DeviceStyle::default(),
         );
-        assert!(tree.layout_root(taffy::Size {
+        assert!(tree.layout_root(cephal::Size {
             width: 200.0,
             height: 600.0
         }));
