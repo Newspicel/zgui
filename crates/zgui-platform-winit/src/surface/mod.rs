@@ -1,7 +1,7 @@
 //! One window: what is drawn into it, what it looks like, and who is listening to it.
 
 pub(crate) mod a11y;
-mod attributes;
+pub(crate) mod attributes;
 mod chrome;
 mod handles;
 

@@ -2,7 +2,7 @@
 
 use winit::dpi::{LogicalPosition, LogicalSize};
 use winit::window::{Fullscreen, WindowAttributes};
-use zgui_platform::{ColorScheme, Decorations, FullscreenMode, SurfaceAttributes};
+use zgui_platform::{ColorScheme, Decorations, FullscreenMode, ShellBehavior, SurfaceAttributes};
 
 use crate::surface::chrome;
 use crate::theme;
@@ -55,7 +55,61 @@ pub(crate) fn window(
     if let Some(id) = &attributes.application_id {
         window = application_name(window, id.as_str());
     }
+    // Showing a window and bringing its application forward are separate acts, and a surface that
+    // appears over what the user is doing must do only the first.
+    window = window.with_active(attributes.activates);
+    let window = shadow(window, attributes.decorations, attributes.transparent);
     title_bar(window, attributes.decorations)
+}
+
+/// Applies the parts of [`ShellBehavior`] a window can only be told once it exists.
+///
+/// macOS carries all three on `NSWindow.collectionBehavior`, which winit does not expose, so this
+/// reaches the window through its `NSView` and sets them directly. It runs after creation because
+/// that is when there is a window to set them on.
+#[cfg(target_os = "macos")]
+pub(crate) fn apply_shell_behavior(window: &winit::window::Window, shell: ShellBehavior) {
+    use objc2::rc::Retained;
+    use objc2_app_kit::{NSView, NSWindow, NSWindowCollectionBehavior};
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+
+    if shell.is_default() {
+        return;
+    }
+
+    let Ok(handle) = window.window_handle() else { return };
+    let RawWindowHandle::AppKit(handle) = handle.as_ref() else { return };
+
+    // SAFETY: winit hands out a pointer to the window's own content view, which is alive for as
+    // long as the window is — and the window is borrowed for this call.
+    let view: Retained<NSView> = unsafe { Retained::retain(handle.ns_view.as_ptr().cast()) }
+        .expect("winit's content view");
+    let Some(ns_window): Option<Retained<NSWindow>> = view.window() else { return };
+
+    let mut behavior = ns_window.collectionBehavior();
+    if shell.all_spaces {
+        behavior |= NSWindowCollectionBehavior::CanJoinAllSpaces;
+    }
+    if shell.over_fullscreen {
+        behavior |= NSWindowCollectionBehavior::FullScreenAuxiliary;
+    }
+    if shell.stationary {
+        behavior |= NSWindowCollectionBehavior::Stationary;
+    }
+    ns_window.setCollectionBehavior(behavior);
+
+    // A window that follows the user everywhere should not vanish when the application is not
+    // the front one, which is what an accessory application spends most of its life being.
+    ns_window.setHidesOnDeactivate(false);
+}
+
+/// The same, where the desktop settles this itself.
+///
+/// A Wayland compositor decides all three from the layer a surface was placed on, and Windows
+/// has no workspaces to join.
+#[cfg(not(target_os = "macos"))]
+pub(crate) fn apply_shell_behavior(window: &winit::window::Window, shell: ShellBehavior) {
+    let _ = (window, shell);
 }
 
 /// Applies a frame that carries no title bar.
@@ -74,6 +128,40 @@ fn title_bar(window: WindowAttributes, decorations: Decorations) -> WindowAttrib
             .with_title_hidden(true),
         _ => window,
     }
+}
+
+/// Takes the desktop's own shadow away from a window that draws its own shape.
+///
+/// macOS traces a window's shadow from its surface, and for a translucent one the trace is both
+/// coarse and cached — so a window whose content is a rounded card inside a transparent margin
+/// gets a shadow around a shape that is not the card. An application drawing its own chrome draws
+/// its own shadow with it, in CSS, where it follows the corner radius exactly.
+///
+/// Only for a window that is both undecorated and translucent. A decorated window's shadow is the
+/// desktop's to draw, and an opaque undecorated one is its own shape, so the trace is right.
+#[cfg(target_os = "macos")]
+fn shadow(
+    window: WindowAttributes,
+    decorations: Decorations,
+    transparent: bool,
+) -> WindowAttributes {
+    use winit::platform::macos::WindowAttributesExtMacOS;
+
+    if transparent && decorations == Decorations::None {
+        return window.with_has_shadow(false);
+    }
+    window
+}
+
+/// The same, where the desktop draws no shadow of its own to take away.
+#[cfg(not(target_os = "macos"))]
+fn shadow(
+    window: WindowAttributes,
+    decorations: Decorations,
+    transparent: bool,
+) -> WindowAttributes {
+    let _ = (decorations, transparent);
+    window
 }
 
 /// The same, on a platform whose frame comes whole.

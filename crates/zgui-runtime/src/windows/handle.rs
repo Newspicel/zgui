@@ -339,6 +339,15 @@ impl WindowHandle {
         self.act(|surface| surface.set_window_level(level));
     }
 
+    /// Shows or hides the window.
+    ///
+    /// Hiding keeps the window, its graphics surface and its whole document — so showing it again
+    /// costs a frame rather than a window creation. That difference is the point for a window
+    /// that appears and disappears many times a day.
+    pub fn set_visible(&self, visible: bool) {
+        self.act(|surface| surface.set_visible(visible));
+    }
+
     /// Sets the picture the desktop shows for this window.
     ///
     /// Does nothing where the desktop takes the icon from elsewhere — from the desktop entry on

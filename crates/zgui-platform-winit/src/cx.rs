@@ -185,6 +185,9 @@ impl PlatformCx for WinitCx<'_> {
             .event_loop
             .create_window(window_attributes(attributes, self.shared.scheme.get()))
             .map_err(|error| PlatformError::SurfaceCreation(error.to_string()))?;
+        // Told to the window rather than asked for in its attributes, because the desktop only
+        // has a window to answer about once it has made one.
+        crate::surface::attributes::apply_shell_behavior(&window, attributes.shell);
         let window = Arc::new(window);
 
         let id = SurfaceId::new(self.shared.next.get());

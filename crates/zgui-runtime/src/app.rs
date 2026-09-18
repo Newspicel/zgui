@@ -132,6 +132,12 @@ pub struct App {
     attributes: SurfaceAttributes,
     /// What the window should hold.
     options: WindowContent,
+    /// What the launch window alone should hold.
+    ///
+    /// Separate from `options`, which every window is layered over: the launch window is a window
+    /// like any other, and what is asked of it — its own sheet, whether it shows itself — belongs
+    /// to it rather than to the application.
+    launch: WindowContent,
     /// What draws it.
     renderer: Option<RendererFactory>,
     /// What shapes its text.
@@ -166,6 +172,7 @@ impl App {
         Self {
             attributes: SurfaceAttributes::new("zgui"),
             options: WindowContent::default(),
+            launch: WindowContent::default(),
             renderer: None,
             text: None,
             metrics: None,
@@ -234,6 +241,28 @@ impl App {
     /// The window's own options, for a caller building on this.
     pub fn options_mut(&mut self) -> &mut WindowContent {
         &mut self.options
+    }
+
+    /// Describes the launch window the way every other window is described.
+    ///
+    /// An application always opens one window, and for most applications the handful of builder
+    /// methods here are all it needs. An application whose launch window is *not* an ordinary
+    /// document window — a panel, a heads-up display, something borderless that opens hidden —
+    /// wants the whole vocabulary [`WindowOptions`](crate::windows::WindowOptions) already has,
+    /// rather than a second copy of it grown one method at a time.
+    ///
+    /// The title and stylesheet already set here are kept when the options carry none of their
+    /// own, so this composes with the builders above rather than replacing them.
+    #[must_use]
+    pub fn with_window(mut self, window: crate::windows::WindowOptions) -> Self {
+        let (attributes, content) = window.into_parts();
+        let title = self.attributes.title.clone();
+        self.attributes = attributes;
+        if self.attributes.title.as_str().is_empty() {
+            self.attributes.title = title;
+        }
+        self.launch = content;
+        self
     }
 
     /// The window's title.
@@ -542,7 +571,7 @@ impl Runtime {
             token: primary,
             spec: Box::new(WindowSpec::new(
                 app.attributes,
-                WindowContent::default(),
+                app.launch,
                 view,
             )),
             surface: None,
@@ -673,10 +702,16 @@ impl Runtime {
         }
         let surface = cx.create_surface(&self.live[index].spec.attributes)?;
         let size = surface.size();
-        let target = RenderTarget::new(
+        // The alpha mode is chosen when the swap chain is first configured, which is here rather
+        // than on the first resize — so a window that composites against what is behind it has to
+        // say so now. Saying it only later leaves the surface opaque for the life of the window.
+        let mut target = RenderTarget::new(
             zgui_geom::Size::new(size.width.0 as i32, size.height.0 as i32),
             zgui_geom::Scale::new(surface.scale_factor() as f32),
         );
+        if self.live[index].spec.attributes.transparent {
+            target = target.translucent();
+        }
         let renderer = (self.renderer)(&surface, target)?;
         // Before the view is built, not after: a view that asks for anything while it is being
         // built asks through a waker that has to already know which surface it belongs to.
@@ -700,6 +735,8 @@ impl Runtime {
         let timers = Rc::clone(&self.timers);
         let handle = self.live[index].handle.clone();
         let close = Rc::clone(&self.live[index].spec.close);
+        // Read before the view is borrowed, which borrows the whole spec.
+        let transparent = self.live[index].spec.attributes.transparent;
         let view = &mut self.live[index].spec.view;
         // Under the application's scope, so that this window's own scope is a child of it: what the
         // application provides above the windows is then visible from inside every one of them.
@@ -715,6 +752,7 @@ impl Runtime {
                 timers,
                 waker,
                 &options,
+                transparent,
                 handle,
                 close,
                 |cx| view(cx),

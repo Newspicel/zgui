@@ -2,7 +2,8 @@
 
 use zgui_geom::{CssPx, Point, Size};
 use zgui_platform::{
-    ColorScheme, Decorations, FullscreenMode, SurfaceAttributes, WindowIcon, WindowLevel,
+    ColorScheme, Decorations, FullscreenMode, ShellBehavior, SurfaceAttributes, WindowIcon,
+    WindowLevel,
 };
 use zgui_vocab::SharedString;
 
@@ -119,6 +120,48 @@ impl WindowOptions {
     pub fn with_theme(mut self, theme: ColorScheme) -> Self {
         self.attributes.theme = Some(theme);
         self
+    }
+
+    /// Whether showing this window should bring the application forward.
+    ///
+    /// Off for a window that appears over what the user is doing — a notification, a heads-up
+    /// panel — so it does not take the keyboard away from whatever they were typing in.
+    #[must_use]
+    pub fn with_active(mut self, active: bool) -> Self {
+        self.attributes.activates = active;
+        self
+    }
+
+    /// How this window should behave toward the desktop's workspaces and full-screen windows.
+    ///
+    /// [`ShellBehavior::overlay`] is what a window that should be present wherever the user is
+    /// looking asks for. Each part is a preference: a desktop that cannot grant one leaves the
+    /// window as it is.
+    #[must_use]
+    pub fn with_shell_behavior(mut self, shell: ShellBehavior) -> Self {
+        self.attributes.shell = shell;
+        self
+    }
+
+    /// Whether the window should show itself once it has painted its first frame.
+    ///
+    /// A window opened with `false` is built, laid out and painted, and then left hidden until
+    /// [`WindowHandle::set_visible`](crate::windows::WindowHandle::set_visible) asks for it. For
+    /// a window that appears many times a day this is a window creation once rather than one per
+    /// appearance — and it appears already painted, rather than a frame later.
+    #[must_use]
+    pub fn with_visible(mut self, visible: bool) -> Self {
+        self.runtime.open_visible = visible;
+        self
+    }
+
+    /// The surface and the content this describes, for a caller that owns both.
+    ///
+    /// Used by [`App::with_window`](crate::App::with_window), which is the one place a window's
+    /// description has to be applied to a window the runtime opens itself.
+    #[must_use]
+    pub fn into_parts(self) -> (SurfaceAttributes, crate::window::WindowContent) {
+        (self.attributes, self.runtime)
     }
 
     /// This window's own stylesheet, cascaded after the application's.

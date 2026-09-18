@@ -130,6 +130,12 @@ zbus = "5.18"
 # backends that implement it.
 raw-window-handle = "0.6.2"
 
+# AppKit, for the three window behaviours winit does not expose: joining every space, floating
+# over a full-screen window, and staying put while the desktop slides. All three live on
+# `NSWindow.collectionBehavior`, which is reachable only from the window winit has already made.
+objc2 = "0.6.4"
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSWindow", "NSView", "NSResponder", "NSGraphics"] }
+
 # --- reactivity: named only by zgui-reactive ------------------------------------------------
 # Without `effects` the whole UI compiles, runs and silently never updates.
 reactive_graph = { version = "=0.2.14", features = ["effects"] }

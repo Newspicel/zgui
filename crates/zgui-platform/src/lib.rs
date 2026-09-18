@@ -78,7 +78,7 @@ mod api;
 #[cfg(test)]
 mod backends;
 
-pub use crate::app::{AppHandler, IdlePolicy, Install, Park, Parked, WakeReason};
+pub use crate::app::{AppHandler, AppPresence, IdlePolicy, Install, Park, Parked, WakeReason};
 pub use crate::capabilities::PlatformCapabilities;
 pub use crate::clipboard::{
     Clipboard, ClipboardData, ClipboardError, ClipboardFormat, ClipboardKind, ClipboardSerial,
@@ -90,6 +90,7 @@ pub use crate::error::{PlatformError, Unsupported};
 pub use crate::monitor::{MonitorInfo, refresh_interval};
 pub use crate::scroll::ScrollSettings;
 pub use crate::surface::{
+    ShellBehavior,
     Anchor, BadIcon, Constrain, CursorStyle, DecorationSource, Decorations, DragEvent,
     FullscreenMode, GpuSurface, KeyboardInteractivity, Layer, LayerPlacement, PopupPlacement,
     PresentPacing, PresentationTiming, ResizeEdge, Surface, SurfaceAttributes, SurfaceEvent,

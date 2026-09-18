@@ -7,6 +7,8 @@ pub mod fonts;
 mod console;
 mod graphics;
 
+pub use zgui_platform::AppPresence;
+
 use zgui_platform::{AppHandler, Decorations, PlatformError};
 use zgui_runtime::AppError;
 use zgui_view::{Anchor, BuildCx, IntoView, View};
@@ -63,6 +65,41 @@ pub fn desktop() -> Driver {
         return zgui_platform_wayland::run;
     }
     zgui_platform_winit::run
+}
+
+/// The same desktop driver, for an application that is not an ordinary one.
+///
+/// [`AppPresence::Accessory`] is what a status-area utility wants: no dock icon and no place in
+/// the switcher, while its windows still appear and still take the keyboard. The presence belongs
+/// to the process and is read while the application starts, so it is chosen here rather than set
+/// later.
+///
+/// ```no_run
+/// use zgui::prelude::*;
+/// use zgui::app::{AppPresence, desktop_as};
+///
+/// # fn main() -> Result<(), zgui::Error> {
+/// app().run_on(desktop_as(AppPresence::Accessory), || view! { column() })
+/// # }
+/// ```
+pub fn desktop_as(presence: AppPresence) -> impl Fn(Box<dyn AppHandler>) -> Result<(), PlatformError>
+{
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "dragonfly",
+        target_os = "freebsd",
+        target_os = "netbsd",
+        target_os = "openbsd"
+    ))]
+    if wayland_wanted() {
+        // The compositor decides an application's presence from the surfaces it makes, so there
+        // is nothing to say here and the ordinary driver is the right one.
+        return move |handler| {
+            let _ = presence;
+            zgui_platform_wayland::run(handler)
+        };
+    }
+    move |handler| zgui_platform_winit::run_as(presence, handler)
 }
 
 /// Whether this program should speak to a compositor directly.
@@ -173,6 +210,32 @@ impl App {
             renderer: None,
             context: None,
         }
+    }
+
+    /// Describes the launch window the way every other window is described.
+    ///
+    /// For an application whose first window is not an ordinary document window: a panel, a
+    /// heads-up display, something borderless that opens hidden. See
+    /// [`WindowOptions`](zgui_runtime::WindowOptions) for what can be asked for.
+    ///
+    /// ```no_run
+    /// use zgui::prelude::*;
+    ///
+    /// # fn main() -> Result<(), zgui::Error> {
+    /// app()
+    ///     .with_window(
+    ///         WindowOptions::new("Panel")
+    ///             .with_decorations(Decorations::None)
+    ///             .with_transparent(true)
+    ///             .with_visible(false),
+    ///     )
+    ///     .run(|| view! { column() })
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn with_window(mut self, window: zgui_runtime::WindowOptions) -> Self {
+        self.inner = self.inner.with_window(window);
+        self
     }
 
     /// Names the window.

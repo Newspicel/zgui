@@ -41,7 +41,7 @@ use winit::application::ApplicationHandler;
 use winit::event::StartCause;
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::WindowId;
-use zgui_platform::{AppHandler, PlatformError, Surface, SurfaceEvent, WakeReason};
+use zgui_platform::{AppHandler, AppPresence, PlatformError, Surface, SurfaceEvent, WakeReason};
 
 use crate::app::window::WindowState;
 use crate::cx::{Shared, WinitCx};
@@ -58,9 +58,50 @@ use crate::waker::UserEvent;
 ///
 /// Returns [`PlatformError::Backend`] when there is no windowing system to connect to.
 pub fn event_loop() -> Result<EventLoop<UserEvent>, PlatformError> {
-    EventLoop::<UserEvent>::with_user_event()
+    event_loop_as(AppPresence::Regular)
+}
+
+/// The same, for an application that is not an ordinary one.
+///
+/// The presence belongs to the process rather than to any window, and macOS reads it while the
+/// application is starting — so it can only be said here, before the loop exists.
+///
+/// # Errors
+///
+/// Returns [`PlatformError::Backend`] when there is no windowing system to connect to.
+pub fn event_loop_as(presence: AppPresence) -> Result<EventLoop<UserEvent>, PlatformError> {
+    let mut builder = EventLoop::<UserEvent>::with_user_event();
+    activation_policy(&mut builder, presence);
+    builder
         .build()
         .map_err(|error| PlatformError::Backend(error.to_string()))
+}
+
+/// Tells macOS how much of a presence this application has.
+#[cfg(target_os = "macos")]
+fn activation_policy(
+    builder: &mut winit::event_loop::EventLoopBuilder<UserEvent>,
+    presence: AppPresence,
+) {
+    use winit::platform::macos::{ActivationPolicy, EventLoopBuilderExtMacOS};
+
+    builder.with_activation_policy(match presence {
+        AppPresence::Accessory => ActivationPolicy::Accessory,
+        AppPresence::Background => ActivationPolicy::Prohibited,
+        // A presence this backend has not heard of is an ordinary application, which is what
+        // every desktop can make and what a caller who asked for more would rather have than a
+        // refusal.
+        AppPresence::Regular | _ => ActivationPolicy::Regular,
+    });
+}
+
+/// The same, where the desktop has no such idea.
+#[cfg(not(target_os = "macos"))]
+fn activation_policy(
+    builder: &mut winit::event_loop::EventLoopBuilder<UserEvent>,
+    presence: AppPresence,
+) {
+    let _ = (builder, presence);
 }
 
 /// Runs `handler` on a real event loop until the last window closes.
@@ -73,7 +114,23 @@ pub fn event_loop() -> Result<EventLoop<UserEvent>, PlatformError> {
 /// Returns [`PlatformError::Backend`] when there is no windowing system to connect to, or when the
 /// loop stopped for a reason of the platform's own.
 pub fn run(handler: Box<dyn AppHandler>) -> Result<(), PlatformError> {
-    let event_loop = event_loop()?;
+    run_as(AppPresence::Regular, handler)
+}
+
+/// Runs `handler` as an application of the given presence.
+///
+/// What a status-area utility hands to its runtime: [`AppPresence::Accessory`] keeps it out of
+/// the dock and the switcher while its windows still work.
+///
+/// # Errors
+///
+/// Returns [`PlatformError::Backend`] when there is no windowing system to connect to, or when
+/// the loop stopped for a reason of the platform's own.
+pub fn run_as(
+    presence: AppPresence,
+    handler: Box<dyn AppHandler>,
+) -> Result<(), PlatformError> {
+    let event_loop = event_loop_as(presence)?;
     let mut app = WinitApp::new(&event_loop, handler);
     zgui_profile::latency::start_epoch();
     event_loop

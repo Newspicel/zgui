@@ -124,6 +124,7 @@ impl ConfiguredSurface {
             &capabilities.alpha_modes,
             setup.opaque,
             gpu.capabilities().mutable_texture_formats,
+            gpu.adapter().get_info().backend,
         );
         formats.log(&gpu.describe());
         debug_assert!(

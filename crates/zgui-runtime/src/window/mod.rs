@@ -75,7 +75,7 @@ use crate::wake::FrameGate;
 pub const ATLAS_SOFT_BYTES: u64 = 64 * 1024 * 1024;
 
 /// What a window should be when it is opened.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 #[non_exhaustive]
 pub struct WindowContent {
     /// The application's own stylesheet, as text.
@@ -92,6 +92,30 @@ pub struct WindowContent {
     /// a tool that wants to feed two consumers can do that on its own side without the loop
     /// growing an opinion about it.
     pub probe: Option<Rc<dyn crate::probe::FrameProbe>>,
+    /// Whether to show the window once it has painted its first frame.
+    ///
+    /// A surface is always created hidden, and the runtime shows it when the first frame is
+    /// presented — that is what stops a flash of empty window at launch. `false` says not to
+    /// take that last step: the window is built, laid out and painted, and then left hidden
+    /// until [`WindowHandle::set_visible`](crate::windows::WindowHandle::set_visible) asks for
+    /// it. For a window that appears many times, this is a window creation once rather than on
+    /// every appearance.
+    pub open_visible: bool,
+}
+
+impl Default for WindowContent {
+    /// Nothing asked for, and a window that shows itself.
+    ///
+    /// Written out rather than derived: `open_visible` is the one field whose useful default is
+    /// not `false`, and a derived one would make every window that took the defaults invisible.
+    fn default() -> Self {
+        Self {
+            stylesheet: None,
+            window_stylesheet: None,
+            probe: None,
+            open_visible: true,
+        }
+    }
 }
 
 impl WindowContent {
@@ -109,6 +133,7 @@ impl WindowContent {
                 .clone()
                 .or_else(|| window.stylesheet.clone()),
             probe: window.probe.clone().or_else(|| self.probe.clone()),
+            open_visible: window.open_visible,
         }
     }
 }
@@ -449,6 +474,13 @@ pub struct Window {
     clock: Arc<dyn zgui_platform::Clock>,
     /// Whether the next frame is the first one.
     first_frame: bool,
+    /// Whether the first frame should also show the window.
+    open_visible: bool,
+    /// Whether the surface composites against what is behind it.
+    ///
+    /// Held rather than asked of the surface each time, because it is decided once when the
+    /// window is asked for and the swap chain is configured from it on every resize.
+    transparent: bool,
     /// Whether a frame has been asked for and has not run yet.
     ///
     /// The platform coalesces repeated requests into one frame, so a second request costs nothing
@@ -524,6 +556,7 @@ impl Window {
         timers: Rc<RefCell<Timers>>,
         waker: Arc<crate::wake::RuntimeWaker>,
         options: &WindowContent,
+        transparent: bool,
         handle: crate::windows::WindowHandle,
         close: Rc<RefCell<crate::commands::CloseCallbacks>>,
         view: impl FnOnce(&mut zgui_view::BuildCx<'_>) -> Box<dyn Anchor>,
@@ -724,6 +757,8 @@ impl Window {
             held: 0,
             clock,
             first_frame: true,
+            open_visible: options.open_visible,
+            transparent,
             awaiting_frame: std::cell::Cell::new(false),
             gate,
             timers,

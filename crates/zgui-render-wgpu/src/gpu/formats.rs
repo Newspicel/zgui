@@ -118,6 +118,7 @@ pub fn choose(
     alpha_modes: &[wgpu::CompositeAlphaMode],
     opaque: bool,
     mutable_texture_formats: bool,
+    backend: wgpu::Backend,
 ) -> Formats {
     let (surface, tier) = choose_surface_format(formats, mutable_texture_formats);
     let twin = match tier {
@@ -130,7 +131,7 @@ pub fn choose(
         scratch: wgpu::TextureFormat::Rgba8Unorm,
         view_format_twin: twin,
         tier,
-        alpha_mode: choose_alpha_mode(alpha_modes, opaque),
+        alpha_mode: choose_alpha_mode(alpha_modes, opaque, backend),
     }
 }
 
@@ -182,6 +183,7 @@ fn choose_surface_format(
 fn choose_alpha_mode(
     alpha_modes: &[wgpu::CompositeAlphaMode],
     opaque: bool,
+    backend: wgpu::Backend,
 ) -> wgpu::CompositeAlphaMode {
     if opaque {
         return pick(alpha_modes, wgpu::CompositeAlphaMode::Opaque);
@@ -189,6 +191,19 @@ fn choose_alpha_mode(
     if alpha_modes.contains(&wgpu::CompositeAlphaMode::PreMultiplied) {
         return wgpu::CompositeAlphaMode::PreMultiplied;
     }
+
+    // Metal offers `Opaque` and `PostMultiplied` and nothing else, and on this backend the second
+    // name does not mean what it says: it is how wgpu spells `CAMetalLayer.opaque = false`, and
+    // Core Animation composites a layer's contents as premultiplied whichever mode was asked for.
+    // So this is the premultiplied path under another name, and the un-premultiply step the
+    // exclusion above exists to avoid is not owed. Taking it at face value is what leaves every
+    // translucent window on macOS composited black.
+    if backend == wgpu::Backend::Metal
+        && alpha_modes.contains(&wgpu::CompositeAlphaMode::PostMultiplied)
+    {
+        return wgpu::CompositeAlphaMode::PostMultiplied;
+    }
+
     tracing::info!(
         "the surface offers no premultiplied alpha mode; the window is composited opaque instead"
     );
@@ -212,7 +227,7 @@ fn pick(
 
 #[cfg(test)]
 mod tests {
-    use super::{Formats, SrgbTier, choose};
+    use super::{Formats, SrgbTier, choose, choose_alpha_mode};
     use wgpu::CompositeAlphaMode as Alpha;
     use wgpu::TextureFormat as Format;
 
@@ -224,7 +239,8 @@ mod tests {
         // Raw driver order on ordinary Linux hardware puts the encoded format first, and that is
         // precisely what wgpu's own default configuration would take.
         let offered = [Format::Bgra8UnormSrgb, Format::Bgra8Unorm];
-        let formats = choose(&offered, &OPAQUE_ONLY, true, true);
+        let formats = choose(&offered, &OPAQUE_ONLY, true, true,
+            wgpu::Backend::Noop);
         assert_eq!(formats.surface, Format::Bgra8Unorm);
         assert_eq!(formats.scene, Format::Bgra8Unorm);
         assert_eq!(formats.tier, SrgbTier::Native);
@@ -238,6 +254,7 @@ mod tests {
             &OPAQUE_ONLY,
             true,
             true,
+            wgpu::Backend::Noop,
         );
         assert_eq!(formats.surface, Format::Rgba8Unorm);
     }
@@ -249,6 +266,7 @@ mod tests {
             &OPAQUE_ONLY,
             true,
             true,
+            wgpu::Backend::Noop,
         );
         assert_eq!(formats.surface, Format::Rgb10a2Unorm);
         assert_eq!(formats.tier, SrgbTier::Native);
@@ -256,7 +274,8 @@ mod tests {
 
     #[test]
     fn an_encoded_only_surface_with_mutable_views_renders_through_the_twin() {
-        let formats = choose(&[Format::Bgra8UnormSrgb], &OPAQUE_ONLY, true, true);
+        let formats = choose(&[Format::Bgra8UnormSrgb], &OPAQUE_ONLY, true, true,
+            wgpu::Backend::Noop);
         assert_eq!(formats.surface, Format::Bgra8UnormSrgb);
         assert_eq!(formats.tier, SrgbTier::ViewFormatTwin);
         assert_eq!(formats.view_format_twin, Some(Format::Bgra8Unorm));
@@ -267,7 +286,8 @@ mod tests {
 
     #[test]
     fn an_encoded_only_surface_without_mutable_views_cancels_the_encode_in_the_copy() {
-        let formats = choose(&[Format::Rgba8UnormSrgb], &OPAQUE_ONLY, true, false);
+        let formats = choose(&[Format::Rgba8UnormSrgb], &OPAQUE_ONLY, true, false,
+            wgpu::Backend::Noop);
         assert_eq!(formats.surface, Format::Rgba8UnormSrgb);
         assert_eq!(formats.tier, SrgbTier::UndoInBlit);
         assert_eq!(formats.view_format_twin, None);
@@ -283,7 +303,7 @@ mod tests {
             vec![Format::Rgba8UnormSrgb],
         ] {
             for mutable in [true, false] {
-                let formats = choose(&offered, &OPAQUE_ONLY, true, mutable);
+                let formats = choose(&offered, &OPAQUE_ONLY, true, mutable, wgpu::Backend::Noop);
                 assert!(
                     !formats.scene.is_srgb(),
                     "{offered:?} with mutable={mutable} composed into {:?}",
@@ -313,11 +333,13 @@ mod tests {
     fn a_translucent_window_asks_for_premultiplied_alpha_and_settles_for_opaque() {
         let both = [Alpha::Opaque, Alpha::PreMultiplied];
         assert_eq!(
-            choose(&[Format::Bgra8Unorm], &both, false, true).alpha_mode,
+            choose(&[Format::Bgra8Unorm], &both, false, true,
+            wgpu::Backend::Noop).alpha_mode,
             Alpha::PreMultiplied
         );
         assert_eq!(
-            choose(&[Format::Bgra8Unorm], &OPAQUE_ONLY, false, true).alpha_mode,
+            choose(&[Format::Bgra8Unorm], &OPAQUE_ONLY, false, true,
+            wgpu::Backend::Noop).alpha_mode,
             Alpha::Opaque
         );
     }
@@ -331,7 +353,8 @@ mod tests {
             Alpha::Opaque,
         ];
         assert_eq!(
-            choose(&[Format::Bgra8Unorm], &all, true, true).alpha_mode,
+            choose(&[Format::Bgra8Unorm], &all, true, true,
+            wgpu::Backend::Noop).alpha_mode,
             Alpha::Opaque
         );
     }
@@ -340,8 +363,53 @@ mod tests {
     fn post_multiplied_is_never_chosen_even_when_it_is_the_only_translucent_mode() {
         let offered = [Alpha::Opaque, Alpha::PostMultiplied];
         assert_eq!(
-            choose(&[Format::Bgra8Unorm], &offered, false, true).alpha_mode,
+            choose(&[Format::Bgra8Unorm], &offered, false, true,
+            wgpu::Backend::Noop).alpha_mode,
             Alpha::Opaque
         );
+    }
+
+    /// Metal offers `Opaque` and `PostMultiplied` and nothing else.
+    const METAL_MODES: [wgpu::CompositeAlphaMode; 2] = [
+        wgpu::CompositeAlphaMode::Opaque,
+        wgpu::CompositeAlphaMode::PostMultiplied,
+    ];
+
+    #[test]
+    fn a_translucent_metal_surface_takes_the_mode_that_makes_its_layer_transparent() {
+        // `PostMultiplied` is how wgpu spells `CAMetalLayer.opaque = false`, and Core Animation
+        // composites a layer's contents as premultiplied whichever mode was named. Refusing it
+        // on the strength of its name is what leaves every translucent window composited black.
+        let chosen = choose_alpha_mode(&METAL_MODES, false, wgpu::Backend::Metal);
+        assert_eq!(chosen, wgpu::CompositeAlphaMode::PostMultiplied);
+    }
+
+    #[test]
+    fn an_opaque_metal_surface_is_still_opaque() {
+        let chosen = choose_alpha_mode(&METAL_MODES, true, wgpu::Backend::Metal);
+        assert_eq!(chosen, wgpu::CompositeAlphaMode::Opaque);
+    }
+
+    #[test]
+    fn post_multiplied_is_still_refused_everywhere_else() {
+        // On every other backend the name means what it says, and taking it would need an
+        // un-premultiply step this pipeline does not have.
+        let chosen = choose_alpha_mode(&METAL_MODES, false, wgpu::Backend::Vulkan);
+        assert_eq!(chosen, wgpu::CompositeAlphaMode::Opaque);
+    }
+
+    #[test]
+    fn premultiplied_wins_wherever_it_is_offered() {
+        let offered = [
+            wgpu::CompositeAlphaMode::Opaque,
+            wgpu::CompositeAlphaMode::PreMultiplied,
+            wgpu::CompositeAlphaMode::PostMultiplied,
+        ];
+        for backend in [wgpu::Backend::Metal, wgpu::Backend::Vulkan] {
+            assert_eq!(
+                choose_alpha_mode(&offered, false, backend),
+                wgpu::CompositeAlphaMode::PreMultiplied,
+            );
+        }
     }
 }

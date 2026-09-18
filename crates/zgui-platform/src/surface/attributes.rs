@@ -3,7 +3,7 @@
 use zgui_geom::{Css, CssPx, Point, Size};
 use zgui_vocab::SharedString;
 
-use crate::surface::chrome::{Decorations, FullscreenMode, WindowLevel};
+use crate::surface::chrome::{Decorations, FullscreenMode, ShellBehavior, WindowLevel};
 use crate::surface::icon::WindowIcon;
 use crate::surface::role::{LayerPlacement, PopupPlacement, SurfaceRole};
 use crate::theme::ColorScheme;
@@ -60,6 +60,17 @@ pub struct SurfaceAttributes {
     pub icon: Option<WindowIcon>,
     /// A light or dark preference for this surface alone; absent follows the desktop.
     pub theme: Option<ColorScheme>,
+    /// Whether showing this surface should bring the application forward.
+    ///
+    /// A notification-shaped window wants this off: it appears over whatever the user is doing
+    /// and must not take the keyboard away from it. Everything else wants it on, which is why it
+    /// is the default.
+    ///
+    /// Honoured where a desktop distinguishes showing a window from activating its application.
+    pub activates: bool,
+    /// How this surface should behave toward the desktop's own arrangement of spaces and
+    /// full-screen windows.
+    pub shell: ShellBehavior,
 }
 
 impl SurfaceAttributes {
@@ -81,6 +92,8 @@ impl SurfaceAttributes {
             level: WindowLevel::Normal,
             icon: None,
             theme: None,
+            activates: true,
+            shell: ShellBehavior::default(),
         }
     }
 

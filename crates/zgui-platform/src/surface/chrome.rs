@@ -188,3 +188,39 @@ mod tests {
         assert!(!Decorations::Full.needs_own_title_bar());
     }
 }
+
+/// How a surface behaves toward the desktop's own arrangement of workspaces and full-screen
+/// windows.
+///
+/// [`WindowLevel`] says what a window sits above. This says what it sits *across* — and the two
+/// are separate because a desktop can grant one without the other: macOS stacks any window and
+/// only joins the named ones to every space, and a Wayland compositor decides both from the layer
+/// a surface was placed on.
+///
+/// Every field is a preference. A desktop that cannot answer one leaves the window where it is
+/// rather than refusing, which is the same contract [`WindowLevel`] carries.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
+#[non_exhaustive]
+pub struct ShellBehavior {
+    /// Whether the surface should appear on every workspace rather than the one it opened on.
+    pub all_spaces: bool,
+    /// Whether it should appear over a full-screen window rather than being hidden behind one.
+    pub over_fullscreen: bool,
+    /// Whether it should stay put when the desktop moves between workspaces, rather than
+    /// sliding with them.
+    pub stationary: bool,
+}
+
+impl ShellBehavior {
+    /// What a notification wants: present wherever the user is looking.
+    #[must_use]
+    pub const fn overlay() -> Self {
+        Self { all_spaces: true, over_fullscreen: true, stationary: true }
+    }
+
+    /// Whether this asks for anything at all.
+    #[must_use]
+    pub const fn is_default(self) -> bool {
+        !self.all_spaces && !self.over_fullscreen && !self.stationary
+    }
+}

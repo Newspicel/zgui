@@ -563,7 +563,15 @@ impl Window {
             self.request_frame();
         }
 
-        if self.first_frame && matches!(outcome, FrameOutcome::Presented(_)) {
+        // A surface that asked to open hidden is never shown by its own first frame, however
+        // that frame turned out. It has still been built, laid out and styled; on macOS it will
+        // not have *painted*, because a hidden window's layer hands out no drawable — so the
+        // first showing costs one frame rather than the window creation and the whole document
+        // build that not opening it at all would cost. Recording the first frame as done is what
+        // stops the branches below reconsidering this every frame.
+        if self.first_frame && !self.open_visible {
+            self.first_frame = false;
+        } else if self.first_frame && matches!(outcome, FrameOutcome::Presented(_)) {
             // A surface is shown by its first frame, never before it: showing an unpainted one is
             // what produces a flash of empty window at launch.
             self.surface.set_visible(true);
@@ -864,10 +872,17 @@ impl Window {
                 self.refresh_interval().as_micros()
             )
         });
-        self.renderer.configure(RenderTarget::new(
+        // A window that composites against what is behind it needs the swap chain to say so:
+        // an opaque alpha mode discards what the cascade decided about `transparent` and the
+        // window comes out black wherever nothing was painted.
+        let mut target = RenderTarget::new(
             Size::new(size.width.0 as i32, size.height.0 as i32),
             zgui_geom::Scale::new(self.scale),
-        ));
+        );
+        if self.transparent {
+            target = target.translucent();
+        }
+        self.renderer.configure(target);
         self.damage = DamageSet::full();
     }
 

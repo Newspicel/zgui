@@ -206,6 +206,7 @@ impl Offscreen {
             &[wgpu::CompositeAlphaMode::Opaque],
             true,
             mutable_texture_formats,
+            gpu.adapter().get_info().backend,
         );
         debug_assert!(
             formats.is_sound(),
@@ -315,6 +316,7 @@ impl Supplied {
             &[wgpu::CompositeAlphaMode::Opaque],
             true,
             false,
+            wgpu::Backend::Noop,
         );
         debug_assert!(
             formats.is_sound(),

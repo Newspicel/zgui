@@ -13,7 +13,7 @@ mod timing;
 mod watchdog;
 
 pub use crate::surface::attributes::SurfaceAttributes;
-pub use crate::surface::chrome::{
+pub use crate::surface::chrome::{ShellBehavior, 
     CursorStyle, DecorationSource, Decorations, FullscreenMode, ResizeEdge, WindowLevel,
 };
 pub use crate::surface::drag::DragEvent;

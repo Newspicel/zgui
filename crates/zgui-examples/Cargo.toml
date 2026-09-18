@@ -98,3 +98,7 @@ required-features = ["drm"]
 
 [lints]
 workspace = true
+
+[[example]]
+name = "accessory"
+path = "../../examples/accessory.rs"

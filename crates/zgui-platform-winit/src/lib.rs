@@ -79,7 +79,7 @@ pub mod surface;
 pub mod theme;
 pub mod waker;
 
-pub use crate::app::{WinitApp, event_loop, run};
+pub use crate::app::{WinitApp, event_loop, event_loop_as, run, run_as};
 pub use crate::clipboard::DesktopClipboard;
 pub use crate::clock::SystemClock;
 pub use crate::cx::WinitCx;
