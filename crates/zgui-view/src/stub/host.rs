@@ -410,6 +410,10 @@ impl ViewHost for StubHost {
         self.shortcuts.borrow_mut().retain(|held| *held != node);
     }
 
+    fn is_text_entry(&self, node: NodeId) -> bool {
+        self.selections.borrow().contains_key(&node)
+    }
+
     fn selection(&self, node: NodeId) -> Option<Range<usize>> {
         self.selections.borrow().get(&node).cloned()
     }

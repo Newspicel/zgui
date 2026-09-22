@@ -653,6 +653,14 @@ impl ViewHost for RuntimeHost {
         ));
     }
 
+    fn is_text_entry(&self, node: NodeId) -> bool {
+        let Some(key) = self.key_of(node) else {
+            return false;
+        };
+        let document = self.document.borrow();
+        crate::editing::Editors::holds_text(&document, key)
+    }
+
     fn selection(&self, node: NodeId) -> Option<Range<usize>> {
         self.selections.of(self.key_of(node)?)
     }

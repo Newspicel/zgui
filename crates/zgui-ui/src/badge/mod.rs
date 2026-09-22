@@ -20,6 +20,8 @@ variants! {
             Default => "zui-badge--default",
             Secondary => "zui-badge--secondary",
             Destructive => "zui-badge--destructive",
+            Success => "zui-badge--success",
+            Warning => "zui-badge--warning",
             Outline => "zui-badge--outline",
             Ghost => "zui-badge--ghost",
             Link => "zui-badge--link",

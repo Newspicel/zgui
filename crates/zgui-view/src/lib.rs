@@ -124,7 +124,9 @@ pub use crate::host::{
     TimerId, ViewHost, WindowShortcut,
 };
 pub use crate::id::{DOCUMENT_COUNT, DocumentId, NodeId};
-pub use crate::node_ref::{ListenerGuard, NodeRef, ObservationRegistry, focused_node};
+pub use crate::node_ref::{
+    ListenerGuard, NodeRef, ObservationRegistry, focus_is_text_entry, focused_node,
+};
 pub use crate::scroll::{ScrollBehavior, ScrollPosition, ScrollTarget};
 pub use crate::sheet::{Stylesheet, install_stylesheet, remove_stylesheet};
 pub use crate::time::{

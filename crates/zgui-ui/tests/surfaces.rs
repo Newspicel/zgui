@@ -33,6 +33,47 @@ fn a_badge_is_writing_rather_than_a_control() {
 }
 
 #[test]
+fn a_tone_badge_says_which_tone_it_is_and_is_filled_from_that_tone_s_own_tokens() {
+    let harness = Harness::open();
+    harness.mount(|| {
+        view! {
+            column {
+                Badge(variant = BadgeVariant::Success) {"ready"}
+                Badge(variant = BadgeVariant::Warning) {"degraded"}
+            }
+        }
+    });
+    let badges = harness.children(harness.only_child());
+    let tones: Vec<Option<String>> = badges
+        .iter()
+        .map(|badge| harness.attribute(*badge, "data-variant"))
+        .collect();
+    assert_eq!(
+        tones,
+        [Some("success".to_owned()), Some("warning".to_owned())]
+    );
+
+    // A tone that took the fill of another tone is a badge announcing the wrong thing, and a
+    // reader reads the colour before the word beside it.
+    for tone in ["success", "warning"] {
+        let rule = zgui_ui::BadgeStyle::CSS
+            .split(&format!("[data-variant=\"{tone}\"]"))
+            .nth(1)
+            .and_then(|rest| rest.split_once('}'))
+            .map(|(block, _)| block)
+            .unwrap_or_else(|| panic!("the sheet carries no {tone} rule"));
+        assert!(
+            rule.contains(&format!("var(--zui-color-{tone})")),
+            "the {tone} badge is not filled from its own tone"
+        );
+        assert!(
+            rule.contains(&format!("var(--zui-color-{tone}-foreground)")),
+            "the {tone} badge does not take the text its own tone comes with"
+        );
+    }
+}
+
+#[test]
 fn a_decorative_separator_is_kept_out_of_the_accessibility_tree_and_a_real_one_is_not() {
     let harness = Harness::open();
     harness.mount(|| {

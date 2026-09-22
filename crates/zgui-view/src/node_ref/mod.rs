@@ -572,6 +572,23 @@ pub fn focused_node() -> Signal<Option<NodeId>, LocalStorage> {
     }
 }
 
+/// Whether the keyboard of this window is in an element a person types into.
+///
+/// What an application-wide chord asks before it acts on a key that carries no modifier: a window
+/// whose focus is in a field must give <kbd>Delete</kbd> and <kbd>Escape</kbd> to the field, and a
+/// window with focus anywhere else may take them for a command of its own.
+///
+/// False outside a window's scope, and false while nothing holds focus.
+#[must_use]
+pub fn focus_is_text_entry() -> bool {
+    let Some(host) = current_host() else {
+        return false;
+    };
+    host.focused()
+        .get_untracked()
+        .is_some_and(|node| host.is_text_entry(node))
+}
+
 #[cfg(test)]
 mod tests {
     use zgui_geom::{DevicePx, Point, Rect, Size};

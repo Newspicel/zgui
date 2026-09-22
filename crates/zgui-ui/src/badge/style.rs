@@ -43,6 +43,16 @@ style! { pub BadgeStyle =>
         background-color: var(--zui-color-control-destructive-fill);
         color: #ffffff;
     }"
+// A tone badge is a fill rather than a mark, so it takes the tone's own foreground. Amber is
+// light enough that its foreground is dark in both schemes.
+":scope[data-variant=\"success\"] {
+        background-color: var(--zui-color-success);
+        color: var(--zui-color-success-foreground);
+    }"
+":scope[data-variant=\"warning\"] {
+        background-color: var(--zui-color-warning);
+        color: var(--zui-color-warning-foreground);
+    }"
 ":scope[data-variant=\"outline\"] {
         border-color: var(--zui-color-border);
         color: var(--zui-color-foreground);

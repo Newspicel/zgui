@@ -498,6 +498,10 @@ mod never {
 
         fn remove_window_shortcut(&self, _node: NodeId) {}
 
+        fn is_text_entry(&self, _node: NodeId) -> bool {
+            false
+        }
+
         fn selection(&self, _node: NodeId) -> Option<Range<usize>> {
             None
         }

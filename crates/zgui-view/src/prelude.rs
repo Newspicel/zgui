@@ -38,7 +38,7 @@ pub use crate::host::{
     FocusMove, FocusTrap, FocusTrapOptions, HostHandle, ViewHost, WindowShortcut,
 };
 pub use crate::id::{DocumentId, NodeId};
-pub use crate::node_ref::{ListenerGuard, NodeRef, focused_node};
+pub use crate::node_ref::{ListenerGuard, NodeRef, focus_is_text_entry, focused_node};
 pub use crate::scroll::{ScrollBehavior, ScrollPosition, ScrollTarget};
 pub use crate::sheet::{Stylesheet, install_stylesheet, remove_stylesheet};
 pub use crate::time::{Timers, request_frame, set_interval, set_timeout};

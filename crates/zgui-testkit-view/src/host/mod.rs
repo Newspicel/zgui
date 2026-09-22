@@ -263,6 +263,10 @@ impl ViewHost for ScriptedHost {
         self.inner.remove_window_shortcut(node);
     }
 
+    fn is_text_entry(&self, node: NodeId) -> bool {
+        self.inner.is_text_entry(node)
+    }
+
     fn selection(&self, node: NodeId) -> Option<Range<usize>> {
         self.inner.selection(node)
     }
