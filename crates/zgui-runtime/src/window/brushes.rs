@@ -113,6 +113,11 @@ impl TextSlots {
 }
 
 /// Which slot one element's text is drawn through.
+///
+/// The slot is the one the element's own cascade result answers to in the table. Holding that
+/// together is what makes the counts above mean what the in-place rewrite reads them as: a record
+/// stands for its result as well as for its element, so a slot every record on it agrees about is
+/// a slot every result that resolves to it agrees about.
 pub(crate) struct TextSlot {
     /// The slot itself, which is what everything already shaped names.
     pub(crate) slot: PaintSlot,
@@ -154,6 +159,20 @@ pub(crate) struct TextSlot {
 /// still an element that moved off its old cascade result, so leaving it out of the count would
 /// make a theme flip in which any single element's colour is unchanged look like a document-wide
 /// split.
+///
+/// # An element that arrives on somebody else's result
+///
+/// A slot belongs to the cascade result it was claimed against, and an element that cascades onto a
+/// result another element already claimed against is drawn through that result's slot from its next
+/// shaping on. So the element moves onto it here and is named as split: the glyphs it shaped under
+/// the slot it leaves read a slot its result stopped answering to, and only re-shaping brings the
+/// two ends back together.
+///
+/// Leaving the record on the old slot is what the in-place rewrite then reads as one element's own
+/// slot. Re-colouring that element writes the slot where it stands, under a result that still
+/// answers to it, and every run flattened under that result afterwards is shaped into the other
+/// element's colour — for as long as the shaping survives.
+///
 /// What one batch of paint updates did to the slots.
 pub(crate) struct Applied {
     /// The elements whose text has to be shaped again under a slot of their own.
@@ -221,24 +240,43 @@ pub(crate) fn apply(
         let key = update.paint.key.clone();
         let claimed = address(&key);
         let held = slots.get(&(update.node, update.run));
-        let slot = match held {
-            Some(held) if !*moved => {
+        // The slot the arriving cascade result already answers to, which is where every run
+        // flattened under it afterwards is drawn. See [`establish`] for why the slot belongs to
+        // the result rather than to whichever element arrives on it.
+        let owned = table.slot_of(claimed);
+        let slot = match (held, owned) {
+            (Some(held), Some(owned)) if owned != held.slot => {
+                // The element has cascaded onto a result something else already claimed a slot
+                // against, which is what losing a colour declaration and falling back to an
+                // inherited one is. The result owns that slot, so the element follows its result:
+                // the record moves onto it, and the glyphs shaped under the slot it leaves are
+                // reported as shaping to do again.
+                //
+                // A record left on the other slot is what the counting below reads. The slot then
+                // looks like this element's own, re-colouring the element rewrites it where it
+                // stands, and every run later flattened under the result that still answers to it
+                // is shaped into this element's colour.
+                split.push((update.node, update.run));
+                owned
+            }
+            (Some(held), _) if !*moved => {
                 // Nothing is drawn differently, so nothing is rewritten and nothing is re-shaped.
                 let slot = held.slot;
                 establish(table, claimed, slot);
                 slot
             }
-            Some(held) if rewritable_in_place(&covered, &owners_at_start, held.slot) => {
+            (Some(held), _) if rewritable_in_place(&covered, &owners_at_start, held.slot) => {
                 let slot = held.slot;
                 table.set(slot, paint);
                 // The new cascade result is pointed at the slot everything already shaped still
                 // names, so that the next paragraph flattened under the new colour does not claim
-                // a second one and draw the two halves of one element in two colours. Only where
-                // the result has no slot of its own: see [`establish`] for what taking one costs.
+                // a second one and draw the two halves of one element in two colours. The arm
+                // above holds a result that already answers to a slot, so this one only ever
+                // points a result that answers to none.
                 establish(table, claimed, slot);
                 slot
             }
-            other => {
+            (other, _) => {
                 // An element leaving a slot that other elements still use cannot be re-coloured by
                 // writing through it, and what its glyphs name was baked in when they were shaped.
                 // The shaping is what has to go.
@@ -284,6 +322,10 @@ pub(crate) fn apply(
 /// That is why the symptom looks like it belongs to the monitor rather than to the flip. The table
 /// is wrong from the moment of the flip and nothing reads the wrong entry until something re-shapes:
 /// dragging the window onto an output at another scale re-shapes every string in it at once.
+///
+/// [`apply`] moves such an element onto the slot its result owns and reports its shaping as work to
+/// do again, so the refusal here stands for the case it cannot reach: a result that answers to the
+/// very slot it is being pointed at.
 fn establish(table: &mut TextPaintTable, claimed: u64, slot: PaintSlot) {
     if table.slot_of(claimed).is_none() {
         table.alias(claimed, slot);
@@ -472,8 +514,18 @@ mod tests {
             },
             restyled: true,
         };
-        apply(&mut slots, &mut table, &[arriving]);
+        let split = apply(&mut slots, &mut table, &[arriving]).split;
 
+        assert_eq!(
+            slots.get(&(node(1), TextRun::Own)).map(|held| held.slot),
+            Some(shared),
+            "the element stayed on a slot its own result stopped answering to"
+        );
+        assert_eq!(
+            split,
+            vec![(node(1), TextRun::Own)],
+            "the glyphs on the slot the element left have to be shaped again"
+        );
         assert_eq!(
             table.slot_of(super::address(&inherited)),
             Some(shared),
@@ -542,6 +594,94 @@ mod tests {
         for n in 5..=7 {
             assert_eq!(drawn(&slots, &table, n), TextPaint::new(grey(0.1)));
         }
+    }
+
+    /// One element's update: an arriving cascade result and the colour it computed to.
+    fn arriving(n: u32, key: &TextPaintKey, color: Color) -> TextPaintUpdate {
+        TextPaintUpdate {
+            node: node(n),
+            index: zgui_dom::NodeIndex::new(n),
+            run: TextRun::Own,
+            paint: zgui_text_style::TextPaint {
+                key: key.clone(),
+                color,
+            },
+            restyled: true,
+        }
+    }
+
+    /// An element that cascades onto a result another element already claimed a slot against.
+    ///
+    /// The result owns that slot: every paragraph flattened under it from now on is drawn through
+    /// it. So the element is moved onto it and its standing glyphs — which name the slot it is
+    /// leaving — are reported as shaping that has to be done again.
+    #[test]
+    fn an_element_that_cascades_onto_a_claimed_result_moves_onto_its_slot() {
+        let mut table = TextPaintTable::new();
+        let mut slots = TextSlots::default();
+        let shared = cascade_result();
+        let own = cascade_result();
+        apply(
+            &mut slots,
+            &mut table,
+            &[
+                arriving(1, &shared, grey(0.1)),
+                arriving(2, &own, grey(0.1)),
+            ],
+        );
+        let claimed = table
+            .slot_of(super::address(&shared))
+            .expect("the first element claimed a slot");
+
+        let split = apply(&mut slots, &mut table, &[arriving(2, &shared, grey(0.1))]).split;
+
+        assert_eq!(
+            slots.get(&(node(2), TextRun::Own)).map(|held| held.slot),
+            Some(claimed),
+            "the element is drawn through a slot its own cascade result does not answer to"
+        );
+        assert_eq!(
+            split,
+            vec![(node(2), TextRun::Own)],
+            "glyphs that name the slot the element left have to be shaped again"
+        );
+    }
+
+    /// A slot two cascade results answer to is left to whichever element stays on it.
+    ///
+    /// The second element here arrived on the first's result and joined its slot. Re-colouring the
+    /// first alone therefore cannot be a write through that slot, however few records name it: the
+    /// result the second still cascades to answers to it, and every string flattened under that
+    /// result afterwards reads whatever the write left behind.
+    #[test]
+    fn a_result_a_second_element_still_holds_keeps_the_colour_its_slot_holds() {
+        let mut table = TextPaintTable::new();
+        let mut slots = TextSlots::default();
+        let shared = cascade_result();
+        let own = cascade_result();
+        apply(
+            &mut slots,
+            &mut table,
+            &[
+                arriving(1, &shared, grey(0.1)),
+                arriving(2, &own, grey(0.1)),
+            ],
+        );
+        apply(&mut slots, &mut table, &[arriving(2, &shared, grey(0.1))]);
+
+        let moved = cascade_result();
+        apply(&mut slots, &mut table, &[arriving(1, &moved, grey(0.8))]);
+
+        let answers = table
+            .slot_of(super::address(&shared))
+            .expect("the result still answers to a slot");
+        assert_eq!(
+            table.get(answers),
+            Some(&TextPaint::new(grey(0.1))),
+            "a run flattened under the shared result would be shaped into the other colour"
+        );
+        assert_eq!(drawn(&slots, &table, 1), TextPaint::new(grey(0.8)));
+        assert_eq!(drawn(&slots, &table, 2), TextPaint::new(grey(0.1)));
     }
 
     /// The path the divergence guard must not cost anything: a theme flip, where every element
