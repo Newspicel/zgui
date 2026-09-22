@@ -6,11 +6,17 @@ style! { pub CommandStyle =>
     // A palette is a panel the colour of a popover with a field at the top of it and a list under.
     // It takes whatever room it is given — inside a dialog that is the dialog, and on a page it is
     // whatever the page allotted — which is why nothing here states a width.
+    //
+    // The height is a flex item's rather than a percentage of the parent. A dialog is as tall as
+    // what is on it, so a percentage of it is a percentage of a height that is still being
+    // decided, and the panel comes out at nothing. `flex` fills a parent that states a height and
+    // takes the height of the field and the list in one that does not.
     ":scope {
         display: flex;
         flex-direction: column;
         width: 100%;
-        height: 100%;
+        flex: 1 1 auto;
+        min-height: 0;
         overflow: hidden;
         border-radius: var(--zui-radius-md);
         background-color: var(--zui-color-popover);
