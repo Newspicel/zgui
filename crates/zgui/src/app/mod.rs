@@ -559,6 +559,15 @@ pub struct Handler {
 }
 
 impl Handler {
+    /// The frame loop, for a caller that drives it by hand.
+    ///
+    /// A headless test runs the real application this way: it builds the window with the same
+    /// builder the program uses, then steps the loop itself and reads what each frame produced.
+    #[must_use]
+    pub fn into_runtime(self) -> zgui_runtime::Runtime {
+        self.runtime
+    }
+
     /// Hands the application to `driver` and returns when the loop finishes.
     ///
     /// # Errors

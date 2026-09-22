@@ -18,6 +18,7 @@ pub mod observe;
 pub mod pointer_text;
 pub mod present;
 pub mod probe;
+pub mod query;
 pub mod resize;
 pub mod scale;
 pub mod scheme;
