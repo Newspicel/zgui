@@ -10,7 +10,7 @@ use zgui::{component, view};
 /// What the spinner's rules are installed under.
 const SHEET: &str = "zui-spinner";
 
-/// A turning ring saying that something is under way.
+/// A turning mark saying that something is under way.
 ///
 /// ```
 /// use zgui::prelude::*;
@@ -30,9 +30,16 @@ const SHEET: &str = "zui-spinner";
 /// has happened*. Use the bar whenever the answer is known, because a spinner beside a task with a
 /// knowable length tells a user less than nothing — it tells them the length is unknowable.
 ///
+/// # Why the mark runs round a track
+///
+/// One quad carries one stroke, so the four sides of a box's border are painted in one colour: a
+/// ring with a transparent side is painted as a whole ring, and a ring that is whole at every angle
+/// holds still while it turns. A faint track with a bright mark on it is two boxes of one colour
+/// each, and it moves.
+///
 /// # What a reader is told
 ///
-/// That the region is busy, under a name. A turning ring means *wait* to somebody looking at it,
+/// That the region is busy, under a name. A turning mark means *wait* to somebody looking at it,
 /// and a status with a label is what means the same to somebody who is not.
 #[component]
 pub fn Spinner(
@@ -53,5 +60,9 @@ pub fn Spinner(
         .class_toggle(zgui::view::ClassName::new("zui-spinner"), true)
         .a11y_from(A11yBinding::new(Role::Status).label(label).busy(true));
 
-    view! { box(class = SpinnerStyle::CLASS, {..own}, {..attrs}, class = class) }
+    view! {
+        box(class = SpinnerStyle::CLASS, {..own}, {..attrs}, class = class) {
+            box(class = "zui-spinner__mark")
+        }
+    }
 }
