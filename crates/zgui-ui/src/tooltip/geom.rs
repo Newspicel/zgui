@@ -23,11 +23,11 @@ const ARROW_SINK: f32 = 2.0;
 pub const ARROW_REACH: f32 = ARROW_SQUARE * core::f32::consts::SQRT_2 / 2.0 - ARROW_SINK;
 
 /// How much clear space stays between the arrow's tip and the trigger, in CSS pixels.
-const TIP_GAP: f32 = 1.0;
+const TIP_GAP: f32 = 4.0;
 
 /// How far a tooltip's panel sits off its trigger, in CSS pixels.
 ///
-/// Room for the arrow and a hair more, so the tip points at the control from just outside it.
+/// Room for the arrow and a clear gap, so the tip points at the control from outside it.
 pub const DEFAULT_OFFSET: f32 = ARROW_REACH + TIP_GAP;
 
 /// How far the panel is placed off the trigger, for a tooltip that draws an arrow or does not.
@@ -54,7 +54,8 @@ mod tests {
 
     #[test]
     fn the_default_offset_clears_the_arrow() {
-        assert!(DEFAULT_OFFSET > ARROW_REACH);
+        // The tip stands four pixels clear of the trigger.
+        assert!((DEFAULT_OFFSET - ARROW_REACH - 4.0).abs() < 1.0e-4);
     }
 
     #[test]
