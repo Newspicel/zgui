@@ -56,7 +56,7 @@ impl WindowHandle {
     /// # let _ = window.move_drag_handler();
     /// # }
     /// ```
-    pub fn move_drag_handler(&self) -> impl Fn(&mut EventCx<'_, events::PointerDown>) + 'static {
+    pub fn move_drag_handler(&self) -> impl Fn(&mut EventCx<'_, events::PointerDown>) + use<> {
         let window = self.clone();
         let last: LastPress = Rc::new(Cell::new(None));
         handler(
@@ -106,7 +106,7 @@ impl WindowHandle {
     /// ```
     pub fn no_drag_handler(
         &self,
-    ) -> impl Fn(&mut EventCx<'_, events::PointerDown>) + Copy + 'static {
+    ) -> impl Fn(&mut EventCx<'_, events::PointerDown>) + Copy + use<> {
         handler(
             events::POINTER_DOWN,
             move |ev: &mut EventCx<'_, events::PointerDown>| ev.stop_propagation(),
@@ -124,7 +124,7 @@ impl WindowHandle {
     pub fn resize_drag_handler(
         &self,
         edge: zgui_platform::ResizeEdge,
-    ) -> impl Fn(&mut EventCx<'_, events::PointerDown>) + 'static {
+    ) -> impl Fn(&mut EventCx<'_, events::PointerDown>) + use<> {
         let window = self.clone();
         handler(
             events::POINTER_DOWN,
