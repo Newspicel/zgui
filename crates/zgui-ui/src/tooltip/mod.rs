@@ -2,12 +2,14 @@
 
 mod arrow;
 mod content;
+mod geom;
 mod provider;
 mod style;
 mod trigger;
 
 pub use crate::tooltip::arrow::{TooltipArrow, TooltipArrowProps};
 pub use crate::tooltip::content::{TooltipContent, TooltipContentProps};
+pub use crate::tooltip::geom::{ARROW_REACH, DEFAULT_OFFSET};
 pub use crate::tooltip::provider::{TooltipDelays, TooltipProvider, TooltipProviderProps};
 pub use crate::tooltip::style::TooltipStyle;
 pub use crate::tooltip::trigger::{TooltipTrigger, TooltipTriggerProps};

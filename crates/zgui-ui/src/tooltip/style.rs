@@ -13,9 +13,7 @@ style! { pub TooltipStyle =>
     // `position: relative` is what puts the arrow *inside* this box rather than beside it. An
     // absolutely positioned box is laid out and painted against its containing block, so with a
     // static surface the arrow's containing block would be the positioner around it — one box
-    // further out than the panel it belongs to. Everything the surface then does to itself as a
-    // whole, the arrow does not do: the exit fades the slug away and leaves the diamond hanging in
-    // the air at full strength until the whole thing is unmounted.
+    // further out than the panel it belongs to.
     //
     // It is also the honest reading of the arrow's own offsets. `left: 50%` is meant to be half of
     // the tooltip, and that it happened to be half of the positioner as well was an accident of the
@@ -78,4 +76,23 @@ style! { pub TooltipStyle =>
         left: 0;
         transform: translate(calc(-50% + 2px), -50%) rotate(45deg);
     }"
+
+    // The arrow arrives and leaves with the slug it belongs to, on the slug's own two durations.
+    // It carries the fade itself because it is the one part of a tooltip drawn *past* the panel's
+    // edge, and a frame redraws the rectangle an element covers: the strip of diamond outside that
+    // rectangle keeps whatever was last painted there unless the diamond is animating as well.
+    //
+    // Opacity alone, so the turn and the placement each side gives it stand through both.
+    ".zui-tooltip__arrow {
+        animation: zui-tooltip-arrow-enter
+            var(--zui-surface-enter-duration, var(--zui-motion-duration-normal))
+            var(--zui-surface-enter-ease, ease) both;
+    }"
+    ".zui-surface[data-state=\"closed\"] .zui-tooltip__arrow {
+        animation: zui-tooltip-arrow-exit
+            var(--zui-surface-exit-duration, var(--zui-motion-duration-normal))
+            var(--zui-surface-exit-ease, ease) both;
+    }"
+    "@keyframes zui-tooltip-arrow-enter { from { opacity: 0; } to { opacity: 1; } }"
+    "@keyframes zui-tooltip-arrow-exit { from { opacity: 1; } to { opacity: 0; } }"
 }

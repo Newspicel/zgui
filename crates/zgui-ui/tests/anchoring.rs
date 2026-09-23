@@ -20,10 +20,11 @@ use zgui::geom::{Device, DevicePx, Point, Rect};
 use zgui::prelude::*;
 use zgui::{component, view};
 use zgui_ui::prelude::*;
+use zgui_ui::tooltip::{ARROW_REACH, DEFAULT_OFFSET};
 use zgui_ui_tokens::prelude::*;
 
 use crate::desktop::census::Seen;
-use crate::desktop::stage::{Stage, WIDTH};
+use crate::desktop::stage::{HEIGHT, Stage, WIDTH};
 
 /// The page the fixtures are laid out on.
 ///
@@ -38,6 +39,7 @@ const SHEET: &str = ":root { background-color: #ffffff; color: #101010; font-fam
                      .probe { align-self: flex-start }
                      .probe.at-right { align-self: flex-end }
                      .tall { height: 1200px; flex-shrink: 0 }
+                     .snug { padding-top: 4px }
                      .region { height: 220px; width: 340px; overflow: auto;
                                border: 1px solid #d0d0d0 }
                      .inside { height: 900px; flex-shrink: 0; padding: 24px; gap: 24px }";
@@ -411,4 +413,98 @@ fn a_select_inside_a_dialog_opens_its_list_under_its_trigger() {
     stage.hold(Duration::from_millis(400));
 
     assert_under(trigger, innermost_box_saying(&stage, LIST), DENSE);
+}
+
+// ---- a tooltip keeps its arrow off the control it names -----------------------------------------
+
+/// What the tooltip in [`Named`] says, which is how its panel is found.
+const NAMED: &str = "Bold";
+
+/// What the tooltip's trigger says, which is how the trigger's box is found.
+const NAMES: &str = "B";
+
+/// A control with a tooltip, shrink-wrapped so the probe's box is the trigger's box.
+#[component]
+fn Named() -> impl IntoView {
+    view! {
+        row(class = "probe") {
+            Tooltip {
+                TooltipTrigger {control {{NAMES}}}
+                TooltipContent {{NAMED}}
+            }
+        }
+    }
+}
+
+/// The panel of the open tooltip that says `text`.
+///
+/// The largest box saying it that is not the overlay band. A tooltip's words are on the panel, on
+/// the positioner around it and on the run of text inside it, and the band the whole thing is
+/// portalled onto is the size of the window — so the panel is the largest of what is left.
+fn panel_saying(stage: &Stage, text: &str) -> Rect<DevicePx, Device> {
+    let band = WIDTH * HEIGHT / 4.0;
+    laid_out(stage, text)
+        .into_iter()
+        .filter(|seen| seen.area() < band)
+        .max_by(|one, two| one.area().total_cmp(&two.area()))
+        .and_then(|seen| seen.rect)
+        .unwrap_or_else(|| panic!("no panel says {text:?}"))
+}
+
+/// Raises the tooltip of a [`Named`] probe and hands back the trigger's box and the panel's.
+fn named(stage: &mut Stage) -> (Rect<DevicePx, Device>, Rect<DevicePx, Device>) {
+    let trigger = box_saying(stage, NAMES);
+    let at = Point::new(
+        DevicePx(trigger.origin.x.0 + trigger.size.width.0 / 2.0),
+        DevicePx(trigger.origin.y.0 + trigger.size.height.0 / 2.0),
+    );
+    stage.move_to(at);
+    stage.hold(Duration::from_millis(200));
+    (trigger, panel_saying(stage, NAMED))
+}
+
+#[test]
+fn a_tooltip_stands_far_enough_off_its_trigger_for_its_arrow() {
+    let mut stage = opened(1.0, || {
+        view! {
+            ThemeProvider {
+                column(class = "page") {text {"over it"}Named()text {"under it"}}
+            }
+        }
+    });
+
+    let (trigger, panel) = named(&mut stage);
+
+    let gap = trigger.origin.y.0 - (panel.origin.y.0 + panel.size.height.0);
+    assert!(
+        (gap - DEFAULT_OFFSET).abs() <= SLACK,
+        "the tooltip's bottom edge is {gap} device pixels above the trigger's top edge rather \
+         than {DEFAULT_OFFSET}; trigger {trigger:?}, tooltip {panel:?}"
+    );
+    assert!(
+        gap > ARROW_REACH,
+        "the arrow reaches {ARROW_REACH} device pixels out of a panel {gap} away, so its tip \
+         lies on the trigger"
+    );
+}
+
+#[test]
+fn a_tooltip_with_no_room_above_flips_below_its_trigger_and_keeps_the_gap() {
+    let mut stage = opened(1.0, || {
+        view! {
+            ThemeProvider {
+                column(class = "page", class = "snug") {Named()text {"under it"}}
+            }
+        }
+    });
+
+    let (trigger, panel) = named(&mut stage);
+
+    let gap = panel.origin.y.0 - (trigger.origin.y.0 + trigger.size.height.0);
+    assert!(
+        (gap - DEFAULT_OFFSET).abs() <= SLACK,
+        "there was no room above, so the tooltip's top edge belongs {DEFAULT_OFFSET} device \
+         pixels below the trigger's bottom edge rather than {gap}; trigger {trigger:?}, \
+         tooltip {panel:?}"
+    );
 }

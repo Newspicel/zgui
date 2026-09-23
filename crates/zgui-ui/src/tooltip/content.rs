@@ -9,6 +9,7 @@ use zgui_ui_primitives::Placement;
 use crate::overlay::{AnchoredSurfaceProps, HoverIntent, OverlayState};
 use crate::tooltip::SHEET;
 use crate::tooltip::arrow::TooltipArrowProps;
+use crate::tooltip::geom::side_offset;
 use crate::tooltip::style::TooltipStyle;
 
 /// What the tooltip says.
@@ -34,10 +35,11 @@ pub fn TooltipContent(
     /// Where it is asked to go, before the window's edges have their say.
     #[prop(into, default = Signal::stored_local(Placement::TOP))]
     placement: Signal<Placement, LocalStorage>,
-    /// How far off the trigger it sits, in pixels.
+    /// How far off the trigger the panel sits, in pixels.
     ///
-    /// Flush against it, so that the arrow reaches the control rather than pointing at a gap.
-    #[prop(default = 0.0)]
+    /// A tooltip that draws an arrow is held at least [`ARROW_REACH`](crate::tooltip::ARROW_REACH)
+    /// away, because the arrow stands outside the panel and would otherwise lie on the control.
+    #[prop(default = crate::tooltip::DEFAULT_OFFSET)]
     offset: f32,
     /// Whether it draws the arrow on the edge facing its trigger.
     #[prop(default = true)]
@@ -52,6 +54,7 @@ pub fn TooltipContent(
     children: ChildrenFn,
 ) -> impl IntoView {
     install_stylesheet(SHEET, TooltipStyle::CSS);
+    let offset = side_offset(offset, arrow);
     let intent = HoverIntent::current();
     let state = intent.as_ref().map_or_else(
         || OverlayState::uncontrolled(false, None),
