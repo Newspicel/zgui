@@ -4,9 +4,8 @@ use core::time::Duration;
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use zgui::prelude::*;
 use zgui::reactive::Owner;
-use zgui::view::TimeoutHandle;
+use zgui::view::{TimeoutHandle, Timers};
 
 /// One pending action that a later call replaces, and any call may take back.
 ///
@@ -94,7 +93,13 @@ impl Delayed {
             );
             return;
         };
-        *self.pending.borrow_mut() = Some(owner.with(|| set_timeout(delay, action)));
+        // The scope may have been taken down since the delay was made — a surface that closed
+        // while the pointer was still over its trigger is the ordinary case — and a window that
+        // is gone keeps no clock. Nothing is scheduled, which is what a torn-down surface wants.
+        let Some(clock) = owner.with(Timers::current) else {
+            return;
+        };
+        *self.pending.borrow_mut() = Some(owner.with(|| clock.set_timeout(delay, action)));
     }
 
     /// Takes back whatever was pending. Doing so when nothing is does nothing.
