@@ -104,9 +104,7 @@ impl WindowHandle {
     /// # let _ = window.no_drag_handler();
     /// # }
     /// ```
-    pub fn no_drag_handler(
-        &self,
-    ) -> impl Fn(&mut EventCx<'_, events::PointerDown>) + Copy + use<> {
+    pub fn no_drag_handler(&self) -> impl Fn(&mut EventCx<'_, events::PointerDown>) + Copy + use<> {
         handler(
             events::POINTER_DOWN,
             move |ev: &mut EventCx<'_, events::PointerDown>| ev.stop_propagation(),

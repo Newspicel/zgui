@@ -1,7 +1,9 @@
 //! One panel of a resizable group.
 
 use zgui::prelude::*;
+use zgui::reactive::RenderEffect;
 use zgui::{component, view};
+use zgui_ui_primitives::Orientation;
 
 use crate::resizable::layout::PanelBound;
 use crate::resizable::style::ResizableStyle;
@@ -41,6 +43,13 @@ pub fn ResizablePanel(
     /// The largest share it may be given.
     #[prop(default = 100.0)]
     max_size: f64,
+    /// The smallest the panel may be squeezed to, in CSS pixels.
+    ///
+    /// Read as a share of the group again whenever the group's box changes, so the floor stays the
+    /// same number of pixels however the window is resized. It holds against `min_size`, and zero
+    /// leaves `min_size` as the only floor.
+    #[prop(default = 0.0)]
+    min_pixels: f64,
     /// What the panel is called, for a reader.
     #[prop(into, optional)]
     label: Option<String>,
@@ -61,6 +70,39 @@ pub fn ResizablePanel(
     let context = ResizableContext::current();
     let bound = PanelBound::new(min_size.clamp(0.0, 100.0), max_size.clamp(0.0, 100.0));
     let id = context.map(|group| group.register_panel(bound, default_size.clamp(0.0, 100.0)));
+
+    // A floor in pixels is a share that changes with the group, so it is watched rather than
+    // worked out once.
+    let floor = match (context, id) {
+        (Some(context), Some(id)) if min_pixels > 0.0 => {
+            let group = context.group();
+            let watching = group.observe_border_box();
+            let vertical = matches!(context.direction(), Orientation::Vertical);
+            Some(RenderEffect::new(move |_| {
+                let Some(measured) = watching.get() else {
+                    return;
+                };
+                let length = if vertical {
+                    measured.size.height.0
+                } else {
+                    measured.size.width.0
+                };
+                if length <= 0.0 {
+                    return;
+                }
+                let scale = if group.scale() > 0.0 {
+                    group.scale()
+                } else {
+                    1.0
+                };
+                let share = f64::from(scale) * min_pixels / f64::from(length) * 100.0;
+                let min = bound.min.max(share).clamp(0.0, bound.max);
+                context.set_bound(id, PanelBound::new(min, bound.max));
+            }))
+        }
+        _ => None,
+    };
+    on_cleanup_local(move || drop(floor));
 
     let share = move || {
         let (Some(context), Some(id)) = (context, id) else {

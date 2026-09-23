@@ -6,7 +6,7 @@ mod panel;
 mod style;
 
 pub use crate::resizable::handle::{ResizableHandle, ResizableHandleProps};
-pub use crate::resizable::layout::{PanelBound, drag, normalise};
+pub use crate::resizable::layout::{PanelBound, clamp, drag, normalise};
 pub use crate::resizable::panel::{ResizablePanel, ResizablePanelProps};
 pub use crate::resizable::style::ResizableStyle;
 
@@ -102,6 +102,34 @@ impl ResizableContext {
             .update(|entries| entries.push(Entry::Handle { id }));
         self.forget_on_cleanup(id);
         id
+    }
+
+    /// Puts new bounds on the panel called `id`, and brings every share back inside them.
+    ///
+    /// What a bound stated in pixels goes through whenever the group's own box changes. The shares
+    /// keep their total, so the panels still fill the group.
+    pub fn set_bound(self, id: u64, bound: PanelBound) {
+        let changed = self.entries.try_update(|entries| {
+            entries.iter_mut().any(|entry| match entry {
+                Entry::Panel {
+                    id: found,
+                    bound: held,
+                    ..
+                } if *found == id && *held != bound => {
+                    *held = bound;
+                    true
+                }
+                _ => false,
+            })
+        });
+        if changed != Some(true) {
+            return;
+        }
+        let (sizes, bounds) = self.panels();
+        let fixed = layout::clamp(&sizes, &bounds);
+        if fixed != sizes {
+            self.write(&fixed);
+        }
     }
 
     /// What share of the group the panel called `id` takes, as a percentage.

@@ -101,9 +101,62 @@ pub fn normalise(sizes: &[f64], bounds: &[PanelBound]) -> Vec<f64> {
     out
 }
 
+/// Brings a set of live sizes back inside their bounds, keeping the total where it was.
+///
+/// A bound that changes after the panels were laid out leaves a size outside it: a minimum stated
+/// in pixels is a different share of the group after the window is resized. Every size is clamped,
+/// and what that adds or takes is shared over the panels that have room in the other direction, in
+/// proportion to how much room each one has.
+///
+/// ```
+/// use zgui_ui::resizable::{PanelBound, clamp};
+///
+/// // The first panel is under a new minimum, and the second pays for it.
+/// let bounds = [PanelBound::new(40.0, 100.0), PanelBound::default()];
+/// assert_eq!(clamp(&[25.0, 75.0], &bounds), [40.0, 60.0]);
+///
+/// // Sizes that already fit are left alone.
+/// assert_eq!(clamp(&[40.0, 60.0], &bounds), [40.0, 60.0]);
+/// ```
+#[must_use]
+pub fn clamp(sizes: &[f64], bounds: &[PanelBound]) -> Vec<f64> {
+    let mut out = sizes.to_vec();
+    for (size, bound) in out.iter_mut().zip(bounds) {
+        *size = size.clamp(bound.min, bound.max);
+    }
+    let debt: f64 = out.iter().sum::<f64>() - sizes.iter().sum::<f64>();
+    if debt.abs() < f64::EPSILON {
+        return out;
+    }
+
+    // The room each panel has in the direction that pays the debt, so that no panel is pushed
+    // past the bound the clamp just put it inside.
+    let slack: Vec<f64> = out
+        .iter()
+        .zip(bounds)
+        .map(|(size, bound)| {
+            if debt > 0.0 {
+                size - bound.min
+            } else {
+                bound.max - size
+            }
+        })
+        .collect();
+    let room: f64 = slack.iter().sum();
+    if room <= f64::EPSILON {
+        return out;
+    }
+    let paid = debt.abs().min(room);
+    for (size, share) in out.iter_mut().zip(&slack) {
+        let moved = paid * share / room;
+        *size += if debt > 0.0 { -moved } else { moved };
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{PanelBound, drag, normalise};
+    use super::{PanelBound, clamp, drag, normalise};
 
     /// How much of the group is accounted for.
     fn total(sizes: &[f64]) -> f64 {
@@ -176,5 +229,27 @@ mod tests {
     #[test]
     fn a_group_with_no_panels_normalises_to_nothing() {
         assert!(normalise(&[], &[]).is_empty());
+    }
+
+    #[test]
+    fn clamping_keeps_the_total_where_it_was() {
+        // The defect this catches is a new minimum that grows one panel without shrinking
+        // another, which pushes the last panel out of the group.
+        let bounds = [
+            PanelBound::new(30.0, 100.0),
+            PanelBound::default(),
+            PanelBound::default(),
+        ];
+        let sizes = clamp(&[10.0, 45.0, 45.0], &bounds);
+        assert!((total(&sizes) - 100.0).abs() < 0.000_1, "{sizes:?}");
+        assert!(sizes[0] >= 30.0);
+    }
+
+    #[test]
+    fn clamping_pays_only_as_far_as_the_other_bounds_allow() {
+        // Every panel is at its own minimum already, so there is nothing to take from.
+        let bounds = [PanelBound::new(60.0, 100.0), PanelBound::new(60.0, 100.0)];
+        let sizes = clamp(&[50.0, 60.0], &bounds);
+        assert_eq!(sizes, [60.0, 60.0]);
     }
 }
