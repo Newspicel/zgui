@@ -89,10 +89,15 @@ impl Setup {
         // Text the element already holds does nothing, so the ordinary loop — a keystroke
         // announced, the caller's value moving, the value arriving back here — leaves the caret
         // exactly where the person is typing.
+        //
+        // The handle is read here, and so subscribed to: it binds as the element is built, which
+        // is after this effect's first run. The run the binding wakes carries the caller's text
+        // into an element that a build before this one left holding something else.
         let follow = RenderEffect::new(move |_| {
-            if let Some(text) = value.get() {
-                element.set_value(&text);
-            }
+            let (Some(text), Some(_)) = (value.get(), element.get()) else {
+                return;
+            };
+            element.set_value(&text);
         });
         // Held for as long as the field is: an effect whose handle is dropped stops running, and a
         // field bound to a dropped one follows its signal precisely once.

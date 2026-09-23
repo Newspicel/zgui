@@ -515,6 +515,44 @@ fn typing_into_a_field_puts_the_letters_in_the_field_and_tells_whoever_asked() {
 }
 
 #[test]
+fn a_field_rebuilt_over_another_binding_shows_what_that_one_holds() {
+    // One field standing over something that changes under it — a search strip over a list of a
+    // chosen kind — is built again with a different signal each time, and keeps its element. The
+    // text it shows has to come from the signal it holds now. Typing first is what makes the
+    // question real: the element then holds text the rebuild carries no record of, so only the
+    // signal can empty it.
+    let harness = Harness::open();
+    let first = RwSignal::new_local(String::new());
+    let second = RwSignal::new_local(String::new());
+    let leading = RwSignal::new_local(true);
+    harness.mount(move || {
+        view! {
+            {move || {
+                let value = if leading.get() { first } else { second };
+                view! { Input(value = value, label = "Search") }
+            }}
+        }
+    });
+    let field = harness.find("zui-field");
+    harness.type_char(field, 'w');
+    harness.type_char(field, 'e');
+    assert_eq!(first.get_untracked(), "we");
+    assert_eq!(text_of(&harness, field), "we");
+
+    leading.set(false);
+    harness.window.frame();
+    assert_eq!(text_of(&harness, harness.find("zui-field")), "");
+
+    second.set("pod".to_owned());
+    harness.window.frame();
+    assert_eq!(
+        text_of(&harness, harness.find("zui-field")),
+        "pod",
+        "and the field follows the signal it was rebuilt over"
+    );
+}
+
+#[test]
 fn a_field_carries_its_placeholder_where_one_rule_can_draw_every_instance() {
     // Not an element: a field's element holds the text nodes the editing model writes and nothing
     // else, which is what makes `:empty` mean "there is no text here". A box holding the
