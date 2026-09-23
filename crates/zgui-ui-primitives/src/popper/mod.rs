@@ -52,6 +52,13 @@ pub use crate::popper::solve::{PopperOptions, Solution, WindowRect, solve};
 /// .popover[data-side="bottom"] { animation: slide-down 180ms }
 /// ```
 ///
+/// `--zui-popper-anchor-width` carries the anchor's own width in CSS pixels, so a surface that
+/// has to be as wide as the control it belongs to says so in the sheet:
+///
+/// ```text
+/// .select__list { width: var(--zui-popper-anchor-width); }
+/// ```
+///
 /// # Two kinds of pixel
 ///
 /// Every measurement a placement is made from arrives in device pixels, so that is the space the
@@ -213,6 +220,15 @@ pub fn Popper(
     // measurement is what decides where it goes. `visibility` keeps the box and its layout and
     // takes it out of the paint, which is exactly the state a surface being placed is in.
     let visibility = move || solution.get().is_none().then(|| "hidden".to_owned());
+    // The anchor's own width, in the CSS pixels a style sheet reads. A surface that has to be
+    // exactly as wide as the control it belongs to — a select's list, a combo box's list — takes
+    // its width from here and stays right through a resize.
+    let anchor_width = move || {
+        let density = Density::reported(positioner.scale());
+        anchor_box
+            .get()
+            .map(|rect| px(density.css(rect.size.width.0.round())))
+    };
     let side = move || {
         solution
             .get()
@@ -232,6 +248,7 @@ pub fn Popper(
             style:left = left,
             style:top = top,
             style:visibility = visibility,
+            style:--zui-popper-anchor-width = anchor_width,
             attr:data-side = side,
             attr:data-align = align
         ) {
