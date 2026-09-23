@@ -38,7 +38,8 @@ use crate::collapsible::{CollapsibleContext, SHEET};
 ///
 /// The measurement is in CSS pixels, because that is the unit a style sheet is written in. The
 /// observation reports device pixels, and the two differ by the window's scale on every display
-/// that is not exactly 1×.
+/// that is not exactly 1×. The number rounds up to the next whole CSS pixel, so a hairline at the
+/// foot of the content stays inside the clip.
 #[component]
 pub fn CollapsibleContent(
     /// Classes merged after the content's own.
@@ -70,7 +71,7 @@ pub fn CollapsibleContent(
             move || {
                 measured
                     .get()
-                    .map(|box_| format!("{}px", box_.size.height.0 / scale()))
+                    .map(|box_| format!("{}px", (box_.size.height.0 / scale()).ceil()))
             },
         )
         // Hidden content is hidden from a reader too. Without this the section would be clipped to
