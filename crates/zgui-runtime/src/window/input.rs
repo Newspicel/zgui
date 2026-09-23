@@ -703,6 +703,29 @@ impl Window {
     /// moment a form validates on. It is announced *after* focus has moved, so a handler that
     /// reads what holds focus sees the answer the user's own action produced rather than the one
     /// they were leaving.
+    /// Clears focus when the element that held it is no longer in the document.
+    ///
+    /// A node a view detached is still in the arena for a while, so the flag answers rather than
+    /// the slot: a key aimed at a detached node runs listeners whose scope is already gone.
+    pub(crate) fn drop_focus_that_went(&mut self, timestamp: Timestamp) {
+        let Some(node) = self.router.interaction().focus.focused() else {
+            return;
+        };
+        let held = {
+            let document = self.document.borrow();
+            let store = document.store();
+            store.index_of(node).is_some_and(|index| {
+                store
+                    .core(index)
+                    .has_flags(zgui_dom::NodeFlags::IN_DOCUMENT)
+            })
+        };
+        if held {
+            return;
+        }
+        self.move_focus(None, zgui_input::FocusSource::Script, timestamp);
+    }
+
     pub(crate) fn move_focus(
         &mut self,
         node: Option<zgui_dom::NodeKey>,

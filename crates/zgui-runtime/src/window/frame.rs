@@ -312,6 +312,10 @@ impl Window {
         // frame, and the flag it raised would otherwise still be standing at the end of it and buy
         // another frame that damages nothing.
         self.document.borrow().changes_serviced();
+        // A view that removed the focused element leaves focus naming a node the document no
+        // longer holds, and a key aimed at it reaches nothing at all. Focus goes back to the
+        // window, where a shortcut hears it.
+        self.drop_focus_that_went(timestamp);
 
         mark("f.restyle");
         let restyled = self.restyle();
