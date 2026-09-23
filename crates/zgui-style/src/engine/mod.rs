@@ -149,6 +149,17 @@ impl StyleEngine {
         epoch
     }
 
+    /// Marks the author rules as changed, so the next restyle matches the whole document again.
+    ///
+    /// A sheet that arrives while the document is being built reaches the rule set after the
+    /// elements it styles are already in the tree. This tells the rule set to re-collect, which
+    /// is what carries the new rules to elements that are already there.
+    pub fn force_author_rules_dirty(&mut self) {
+        use style::stylesheets::OriginSet;
+        self.stylist
+            .force_stylesheet_origins_dirty(OriginSet::ORIGIN_AUTHOR);
+    }
+
     /// Whether the installed sheets have changed since the last restyle.
     ///
     /// This is the frame's one style input that marks nothing on any node: adding, replacing or

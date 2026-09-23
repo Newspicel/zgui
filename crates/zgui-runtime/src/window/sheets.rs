@@ -30,6 +30,10 @@ impl Window {
                 diagnostics
             }
         };
+        drop(document);
+        // The elements the sheet styles may already be in the tree: a component installs its own
+        // rules while it is being built, and the rule set receives them after the build.
+        self.engine.force_author_rules_dirty();
         for report in diagnostics.iter() {
             tracing::warn!(
                 target: "zgui::css",
