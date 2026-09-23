@@ -2,7 +2,7 @@
 
 use zgui::prelude::*;
 use zgui::view::AttrName;
-use zgui::vocab::{Key, NamedKey};
+use zgui::vocab::{FocusCause, Key, NamedKey};
 use zgui::{component, view};
 
 use crate::overlay::{HoverIntent, OverlayState};
@@ -85,7 +85,12 @@ pub fn TooltipTrigger(
             node_ref = {state.trigger()},
             on:pointer_enter = move |_| { if let Some(intent) = &on_enter { intent.enter() } },
             on:pointer_leave = move |_| { if let Some(intent) = &on_leave { intent.leave() } },
-            on:focus_in = move |_| {
+            on:focus_in = move |ev: &mut EventCx<'_, events::FocusIn>| {
+                // The keyboard alone: a trap that focuses its first control as it opens, and a
+                // control given focus by the program, asked for nothing to be shown.
+                if ev.cause != FocusCause::Keyboard {
+                    return;
+                }
                 if let Some(intent) = &on_focus {
                     intent.close_now();
                     intent.state().open();

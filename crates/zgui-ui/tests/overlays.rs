@@ -618,6 +618,29 @@ fn focusing_a_tooltip_trigger_shows_it_without_waiting() {
 }
 
 #[test]
+fn a_trigger_the_program_focused_raises_nothing() {
+    // A modal surface focuses its first control as it opens. The control was reached by the
+    // surface rather than by a reader, so its label stays down.
+    let harness = Harness::open();
+    harness.mount(|| {
+        view! {
+            Tooltip(delay = Duration::ZERO) {
+                TooltipTrigger {Button {"B"}}
+                TooltipContent {"Bold"}
+            }
+        }
+    });
+    let trigger = harness.find("zui-tooltip__trigger");
+    harness.window.dispatcher().send_to(
+        trigger,
+        EventKind::FocusIn,
+        Payload::Focus(FocusEvent::new(FocusCause::Programmatic)),
+    );
+    harness.window.frame();
+    assert!(find(&harness, "zui-tooltip").is_none());
+}
+
+#[test]
 fn a_hover_card_stays_up_while_the_pointer_is_on_it() {
     // Without this a hover card can never be reached: it vanishes in the gap between the trigger
     // and itself, and nothing in it can ever be read.
