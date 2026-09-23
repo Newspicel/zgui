@@ -942,3 +942,76 @@ fn changing_the_root_font_size_does_not_rebuild_the_box_tree() {
     // lock, so the names above are the assertion; what was read is only kept for a debugger.
     let _ = moved;
 }
+
+/// A window whose content is a tall painted panel, or a short line of text in its place.
+///
+/// The two shapes are what make the case: the panel is taller than what replaces it, and the box
+/// holding both is a fixed size that paints nothing. Nothing about the replacement, and nothing
+/// about the box above it, reaches the pixels the panel had below the new line — so the only thing
+/// that can damage them is the removal itself.
+const REMOVAL_CSS: &str = "root { display: block; width: 400px; height: 300px; padding: 100px }
+                           .port { display: block; width: 200px; height: 80px }
+                           .inner { display: block; width: 100% }
+                           text { display: block; width: 40px; height: 20px }
+                           .swatch { display: block; width: 30px; height: 60px;
+                                     background-color: #101010 }";
+
+/// A window whose panel stands while the signal says so, and is a line of text otherwise.
+fn window_removing(shown: RwSignal<bool>, log: &Log) -> zgui_platform_headless::Harness<Runtime> {
+    mount(REMOVAL_CSS, log, move |cx: &mut BuildCx<'_>| {
+        Box::new(
+            zgui_elements::column()
+                .class("root")
+                .child(
+                    zgui_elements::column()
+                        .class("port")
+                        .child(zgui_view::Dynamic::new(move || {
+                            if shown.get() {
+                                zgui_view::AnyView::new(
+                                    zgui_elements::column()
+                                        .class("inner")
+                                        .child(zgui_elements::column().class("swatch")),
+                                )
+                            } else {
+                                zgui_view::AnyView::new(zgui_elements::text().child("none"))
+                            }
+                        })),
+                )
+                .into_view()
+                .build(cx),
+        )
+    })
+}
+
+/// A subtree taken out of the document damages every pixel it covered.
+///
+/// The composition walk descends the boxes that are there now, so it never reaches a box that has
+/// left the tree. Where the thing that replaces it is smaller, the difference is pixels nobody
+/// draws over: the list that emptied keeps its last row on the screen until something else happens
+/// to damage that strip.
+#[test]
+fn a_subtree_that_left_the_document_damages_the_pixels_it_covered() {
+    let shown = RwSignal::new(true);
+    let log = Log::default();
+    let mut app = window_removing(shown, &log);
+    app.settle(8);
+    assert_mounted_fully(&log);
+
+    let panel = {
+        let window = app.app().windows().first().expect("a window");
+        box_of_width(window, 30.0)
+    };
+
+    log.borrow_mut().clear();
+    shown.set(false);
+    app.settle(8);
+    let frames = log.borrow().clone();
+    assert!(!frames.is_empty(), "taking the panel out drew no frame");
+    let (bounds, _area) = covered(&frames);
+    let bounds = bounds.expect("the frames damaged something");
+    assert!(
+        contains(bounds, panel),
+        "the frames that took the panel out were drawn against {bounds:?}, which leaves part of \
+         the {panel:?} it covered on the screen"
+    );
+}

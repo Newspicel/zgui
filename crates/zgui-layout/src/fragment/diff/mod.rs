@@ -119,6 +119,15 @@ pub fn rebuild_in(
         ..Descent::root(viewport_of(store, root), tables.spatial.viewport())
     };
     let scale = tables.device.scale;
+    // Every piece of a box that left the tree before this walk began. The walk descends the boxes
+    // that are there now, so it never reaches one of these, and the rectangle a departed piece
+    // covered is nobody's ink from here on: it is absorbed here or last frame's pixels stay on the
+    // screen. [`Pass::retire`] does the same for a box that kept its name and lost a piece.
+    let vacated: Vec<Rect<DevicePx, Device>> = store
+        .retired_fragments()
+        .iter()
+        .filter_map(|frag| store.fragment(*frag).map(|piece| piece.subtree_ink))
+        .collect();
     // Deliberately *not* seeded with what the set already holds. A frame runs this walk more than
     // once — a scroll is delivered to the document between two of them — and the damage standing at
     // entry is the earlier pass's, which for a scrolling document is mostly that pass's own rigid
@@ -141,6 +150,11 @@ pub fn rebuild_in(
         // decided before the frame and must not change part-way through one.
         passes: split::current(),
     };
+    for gone in vacated {
+        // Taken whole rather than cut to anything: the chain it was drawn under belongs to a frame
+        // that is gone.
+        pass.damage_beyond_a_move(gone, Admitted::everything());
+    }
     pass.visit(root, descent, None, None, (0, HitOrder::MAX));
     let moves = pass.moves;
     // Every rigid move the walk made wrote its entries and left the hierarchy above them for here,

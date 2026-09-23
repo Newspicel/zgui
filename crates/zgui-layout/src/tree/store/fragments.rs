@@ -272,6 +272,14 @@ impl LayoutStore {
         }
     }
 
+    /// The fragments destroyed since the last drain.
+    ///
+    /// A destroyed fragment stays readable until the frame is recycled, so the rectangle it
+    /// covered is still there to be damaged.
+    pub(crate) fn retired_fragments(&self) -> &[FragKey] {
+        &self.retired
+    }
+
     /// Takes the fragments destroyed since the last call, leaving the list empty.
     ///
     /// Drained rather than read so that each destroyed name is handed out exactly once: a second
