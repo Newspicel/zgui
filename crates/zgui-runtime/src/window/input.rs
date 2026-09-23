@@ -262,7 +262,7 @@ impl Window {
             && !held
             && let Some(default) = default
         {
-            self.carry_out_default(default, timestamp);
+            self.carry_out_default(default, modifiers, Self::button_of(event), timestamp);
         }
         // A handler that clicked its own element on the press has taken the activation, and the
         // release that ends that press must not click it a second time. Forgetting the press is the
@@ -555,15 +555,31 @@ impl Window {
         }
     }
 
+    /// The button one surface event names, when it names one.
+    fn button_of(event: &SurfaceEvent) -> Option<zgui_vocab::PointerButton> {
+        match event {
+            SurfaceEvent::Pointer { event, .. } => event.button,
+            _ => None,
+        }
+    }
+
     /// Carries out the framework's own behaviour for one event, when no handler refused it.
-    fn carry_out_default(&mut self, default: zgui_input::FrameworkDefault, timestamp: Timestamp) {
+    fn carry_out_default(
+        &mut self,
+        default: zgui_input::FrameworkDefault,
+        modifiers: Modifiers,
+        button: Option<zgui_vocab::PointerButton>,
+        timestamp: Timestamp,
+    ) {
         use zgui_input::FrameworkDefault;
         match default {
             FrameworkDefault::Focus { node, source } => self.move_focus(node, source, timestamp),
             FrameworkDefault::Activate(node) => {
-                self.synthesize(
+                self.synthesize_pointer(
                     zgui_view_dom::id::to_view(node),
                     EventKind::Click,
+                    modifiers,
+                    button,
                     timestamp,
                 );
             }
@@ -892,6 +908,21 @@ impl Window {
         event: EventKind,
         timestamp: Timestamp,
     ) {
+        self.synthesize_pointer(node, event, Modifiers::NONE, None, timestamp);
+    }
+
+    /// The same, with the modifiers and the button of the interaction that asked for it.
+    ///
+    /// An activation carries what the release carried, so a handler reads the same control and
+    /// shift state off a click as off the press behind it.
+    pub(crate) fn synthesize_pointer(
+        &mut self,
+        node: zgui_view::NodeId,
+        event: EventKind,
+        modifiers: Modifiers,
+        button: Option<zgui_vocab::PointerButton>,
+        timestamp: Timestamp,
+    ) {
         let Some(key) = zgui_view_dom::id::to_document(node) else {
             return;
         };
@@ -912,8 +943,10 @@ impl Window {
                 zgui_geom::CssPx(0.0),
                 zgui_geom::CssPx(0.0),
             ));
-        let payload = Payload::Pointer(zgui_vocab::PointerEvent::mouse(position));
-        self.dispatch_synthetic(key, event, payload, timestamp);
+        let mut pointer = zgui_vocab::PointerEvent::mouse(position);
+        pointer.button = button;
+        let payload = Payload::Pointer(pointer);
+        self.dispatch_with(key, event, payload, modifiers, timestamp);
     }
 
     /// Dispatches an event this process produced, down the path a real one would have taken.
@@ -929,6 +962,18 @@ impl Window {
         payload: Payload,
         timestamp: Timestamp,
     ) {
+        self.dispatch_with(key, event, payload, Modifiers::NONE, timestamp);
+    }
+
+    /// The same, with the modifiers a handler reads off the event.
+    pub(crate) fn dispatch_with(
+        &mut self,
+        key: zgui_dom::NodeKey,
+        event: EventKind,
+        payload: Payload,
+        modifiers: Modifiers,
+        timestamp: Timestamp,
+    ) {
         let steps = {
             let document = self.document.borrow();
             let chain = zgui_input::HitChain::to_root(document.store(), key);
@@ -942,7 +987,7 @@ impl Window {
             event,
             Some(key),
             &payload,
-            Modifiers::NONE,
+            modifiers,
             timestamp,
         );
     }
