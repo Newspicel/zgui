@@ -11,7 +11,7 @@
 
 use zgui_dom::{DocumentStore, NodeKey};
 use zgui_layout::LayoutStore;
-use zgui_vocab::{Key, KeyEvent, Modifiers, NamedKey, ScrollDelta, ScrollPhase};
+use zgui_vocab::{Key, KeyEvent, Modifiers, NamedKey, PointerButton, ScrollDelta, ScrollPhase};
 
 use crate::focus::order::{self, FocusDirection};
 use crate::hit::HitChain;
@@ -94,7 +94,18 @@ pub fn on_press(
 ///
 /// A press that slid off its element before being let go is not an activation, which is the
 /// affordance that lets someone change their mind mid-click.
-pub fn on_release(chain: &HitChain, pressed: Option<NodeKey>) -> Option<FrameworkDefault> {
+///
+/// The primary button alone activates. The secondary button belongs to the context menu, the
+/// middle one and the two side buttons to the application, and a control that ran its action on
+/// any of them would fire on a right press and on the button a mouse navigates back with.
+pub fn on_release(
+    chain: &HitChain,
+    pressed: Option<NodeKey>,
+    button: Option<PointerButton>,
+) -> Option<FrameworkDefault> {
+    if !matches!(button, None | Some(PointerButton::Primary)) {
+        return None;
+    }
     let pressed = pressed?;
     chain
         .contains(pressed)
@@ -225,8 +236,8 @@ mod tests {
     use zgui_dom::{Document, EverythingMatters, NodeIndex};
     use zgui_interned::{AttrName, ElementName};
     use zgui_vocab::{
-        Key, KeyCode, KeyEvent, Modifiers, NamedKey, PhysicalKey, ScrollDelta, SharedString,
-        UiState,
+        Key, KeyCode, KeyEvent, Modifiers, NamedKey, PhysicalKey, PointerButton, ScrollDelta,
+        SharedString, UiState,
     };
 
     use super::{FrameworkDefault, on_key, on_press, on_release};
@@ -290,18 +301,41 @@ mod tests {
         let store = document.store();
         let over_label = HitChain::to_root(store, store.key_of(label));
         let over_root = HitChain::to_root(store, store.key_of(root));
+        let primary = Some(PointerButton::Primary);
 
         assert_eq!(
-            on_release(&over_label, Some(store.key_of(control))),
+            on_release(&over_label, Some(store.key_of(control)), primary),
             Some(FrameworkDefault::Activate(store.key_of(control))),
             "the release is inside the control that was pressed"
         );
         assert_eq!(
-            on_release(&over_root, Some(store.key_of(control))),
+            on_release(&over_root, Some(store.key_of(control)), primary),
             None,
             "and sliding off it before letting go is not an activation"
         );
-        assert_eq!(on_release(&over_label, None), None);
+        assert_eq!(on_release(&over_label, None, primary), None);
+    }
+
+    #[test]
+    fn a_button_beside_the_primary_one_activates_nothing() {
+        let (document, [_, control, label]) = document();
+        let store = document.store();
+        let over_label = HitChain::to_root(store, store.key_of(label));
+        let pressed = Some(store.key_of(control));
+
+        for button in [
+            PointerButton::Secondary,
+            PointerButton::Middle,
+            PointerButton::Back,
+            PointerButton::Forward,
+            PointerButton::Other(9),
+        ] {
+            assert_eq!(
+                on_release(&over_label, pressed, Some(button)),
+                None,
+                "{button:?} must leave the control alone"
+            );
+        }
     }
 
     #[test]
