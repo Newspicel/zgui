@@ -553,6 +553,7 @@ impl<D: FrameDirty> Pass<'_, '_, D> {
         // still, whatever happened to the box's own pieces: a column that grew because one row
         // did has moved none of the rows above it.
         let settled = !own.intersects(ENTERS)
+            && placed.descent.shift == previous_shift
             && movement.is_none()
             && (!moved || (placed.descent.origin_stable && transform_stable));
         // Deeper visits append their own regions past `children_end` and truncate them again, so

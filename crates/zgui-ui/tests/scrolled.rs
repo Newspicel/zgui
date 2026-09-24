@@ -32,9 +32,12 @@ mod desktop;
 mod device;
 mod painted;
 
-use zgui::geom::{Device, DevicePx, Rect};
+use core::time::Duration;
+
+use zgui::geom::{Device, DevicePx, Point, Rect};
 use zgui::view;
-use zgui::view::{AnyView, NodeRef};
+use zgui::view::{AnyView, NodeRef, ScrollBehavior, ScrollTarget};
+use zgui_ui::prelude::*;
 use zgui_ui_tokens::prelude::*;
 
 use crate::painted::stage::Stage;
@@ -48,8 +51,14 @@ const SHEET: &str = ":root { background-color: #ffffff; color: #101010; font-fam
                      .page { padding: 16px; align-items: flex-start }
                      .port { width: 300px; height: 240px; overflow-y: scroll }
                      .tall { flex-direction: column; gap: 8px; align-items: flex-start }
+                     .moved { transform: translate(0px, 0px); overflow: hidden }
+                     .zui-dialog.held { max-height: 360px; padding: 24px 0 0; overflow: hidden }
+                     .body { flex: 0 1 auto; min-height: 0 }
                      .card { width: 200px; height: 48px; padding: 8px;
                              background-color: #2f6bff; color: #ffffff }";
+
+/// The fill of a card, as the readback reports it.
+const CARD: (u8, u8, u8) = (0x2f, 0x6b, 0xff);
 
 /// One detent towards the end of the content, in lines.
 const DOWN: f32 = 1.0;
@@ -186,4 +195,132 @@ fn rows_that_left_through_the_top_of_the_port_come_back_whole() {
             "after detent {round} back up: the port is flat"
         );
     }
+}
+
+/// A dialog whose body scrolls under its title, the way a detail view stands in one.
+///
+/// The dialog is drawn through the placement its enter animation holds, so everything in the body
+/// is composed under a matrix.
+fn rows_in_a_dialog(port: NodeRef) -> impl Fn() -> AnyView + use<> {
+    move || {
+        AnyView::new(view! {
+            ThemeProvider {
+                column(class = "page") {
+                    Dialog(default_open = true) {
+                        DialogContent(class = "held") {
+                            DialogTitle {"Rows"}
+                            scroll(class = "body", node_ref = port) {
+                                column(class = "tall") {{cards()}}
+                            }
+                        }
+                    }
+                }
+            }
+        })
+    }
+}
+
+/// A port inside a box with a transform of its own and a clip.
+fn rows_in_a_moved_box(port: NodeRef) -> impl Fn() -> AnyView + use<> {
+    move || {
+        AnyView::new(view! {
+            ThemeProvider {
+                column(class = "page") {
+                    column(class = "moved") {
+                        column(class = "port", node_ref = port) {
+                            column(class = "tall") {{cards()}}
+                        }
+                    }
+                }
+            }
+        })
+    }
+}
+
+/// Forty labelled cards.
+fn cards() -> Vec<AnyView> {
+    (0..40)
+        .map(|index| AnyView::new(view! { row(class = "card") {text {{format!("row {index}")}}} }))
+        .collect()
+}
+
+/// The label of the first card inside `port`, after failing when a card there is not drawn where
+/// its box is.
+///
+/// Each card fully inside the port is filled at its top left corner, and the gap above it is not.
+/// A port that moved its boxes and kept its pixels fails both on some card.
+fn cards_in_place(stage: &Stage, port: Rect<DevicePx, Device>, when: &str) -> String {
+    let census = stage.census();
+    let mut first = None;
+    let mut checked = 0;
+    for node in census
+        .nodes
+        .iter()
+        .filter(|node| node.text.starts_with("row "))
+    {
+        let Some(card) = node.rect else { continue };
+        if card.size.width.0 < 100.0 {
+            continue;
+        }
+        let top = card.origin.y.0;
+        let bottom = port.origin.y.0 + port.size.height.0;
+        if top - 6.0 < port.origin.y.0 || top + card.size.height.0 > bottom {
+            continue;
+        }
+        let x = card.origin.x.0 + 2.0;
+        let fill = stage.colour_at(Point::new(DevicePx(x), DevicePx(top + 2.0)));
+        let gap = stage.colour_at(Point::new(DevicePx(x), DevicePx(top - 4.0)));
+        assert_eq!(
+            fill, CARD,
+            "{when}: {:?} is not filled where its box is",
+            node.text
+        );
+        assert_ne!(gap, CARD, "{when}: the gap above {:?} is filled", node.text);
+        first.get_or_insert_with(|| node.text.clone());
+        checked += 1;
+    }
+    assert!(
+        checked > 2,
+        "{when}: only {checked} cards stood inside the port"
+    );
+    first.unwrap_or_default()
+}
+
+/// Scrolls `port` down in steps, and fails when a step leaves a card away from its box or moves
+/// nothing.
+fn assert_scrolls_in_place(stage: &mut Stage, port: NodeRef) {
+    let node = port.get().expect("the port was built");
+    let rect = stage.rect_of(node);
+    let mut seen = cards_in_place(stage, rect, "before a scroll");
+    for round in 1..=4 {
+        port.scroll_to(
+            ScrollTarget::By(Point::new(DevicePx(0.0), DevicePx(90.0))),
+            ScrollBehavior::Instant,
+        );
+        stage.tick();
+        stage.settle();
+        let now = cards_in_place(stage, rect, &format!("after step {round}"));
+        assert_ne!(
+            now, seen,
+            "step {round} moved no card out of the top of the port"
+        );
+        seen = now;
+    }
+}
+
+/// A dialog body scrolled by its container shows the cards at the places they scrolled to.
+#[test]
+fn a_dialog_body_paints_what_it_scrolled_to() {
+    let port = NodeRef::new();
+    let mut stage = staged!(rows_in_a_dialog(port));
+    stage.wait(Duration::from_millis(600));
+    assert_scrolls_in_place(&mut stage, port);
+}
+
+/// A port under a transform of its own shows the cards at the places they scrolled to.
+#[test]
+fn a_port_inside_a_transformed_box_paints_what_it_scrolled_to() {
+    let port = NodeRef::new();
+    let mut stage = staged!(rows_in_a_moved_box(port));
+    assert_scrolls_in_place(&mut stage, port);
 }
