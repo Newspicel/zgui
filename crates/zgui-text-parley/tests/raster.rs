@@ -356,3 +356,36 @@ fn a_face_handle_still_rasterises_after_its_family_is_unregistered() {
         "a paragraph shaped before the unregistration is still on screen and still has to draw"
     );
 }
+
+/// Where the ink of the rows from `rows` sits, as the mean column weighted by coverage.
+fn ink_column(image: &zgui_text::GlyphImage, rows: std::ops::Range<u32>) -> f32 {
+    let width = image.size.width;
+    let (mut sum, mut weight) = (0.0f32, 0.0f32);
+    for row in rows {
+        for column in 0..width {
+            let coverage = f32::from(image.bytes[(row * width + column) as usize]);
+            sum += coverage * column as f32;
+            weight += coverage;
+        }
+    }
+    sum / weight.max(1.0)
+}
+
+/// A synthesised italic leans the tile forward: the top of a stem sits right of its foot.
+#[test]
+fn a_synthetic_slant_leans_the_tile_forward() {
+    let (fonts, face, glyph) = first_glyph("l");
+    let raster = Rasteriser::new(fonts);
+    let key = GlyphKey {
+        synthetic_slant_bits: 14.0f32.to_bits(),
+        ..GlyphKey::new(face, glyph, 24.0, SubpixelOffset(0), RasterStyle::Grayscale)
+    };
+    let image = raster.raster(&key).expect("a tile");
+    let height = image.size.height;
+    let top = ink_column(&image, 0..height / 4);
+    let foot = ink_column(&image, height - height / 4..height);
+    assert!(
+        top > foot + 2.0,
+        "the top of the stem leans right of its foot: {top} against {foot}"
+    );
+}

@@ -131,7 +131,7 @@ fn renderer(key: &GlyphKey) -> Render<'static> {
         // A synthesised italic leans the glyph forward, which is a shear along x by the angle the
         // face would have been drawn at.
         render.transform(Some(Transform::skew(
-            Angle::from_degrees(-slant),
+            Angle::from_degrees(slant),
             Angle::ZERO,
         )));
     }
