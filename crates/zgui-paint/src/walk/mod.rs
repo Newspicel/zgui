@@ -16,6 +16,7 @@
 //! open, or composites one that was never begun — and neither is anything when the damage says the
 //! whole surface is being redrawn.
 
+pub mod corners;
 pub mod decorate;
 pub mod fill;
 pub mod order;
@@ -672,6 +673,11 @@ impl Pass<'_, '_> {
             text_fill: fill::signature(text_fill.as_ref()),
             anim,
             alpha: self.alpha().to_bits(),
+            corners: corners::signature(crate::lower::border::radii_of(
+                &store.node(fragment.box_).style,
+                fragment.border_box,
+                self.input.scale,
+            )),
             highlights: self.highlight_signature(fragment),
         };
         match self.painter.cache.reuse(self.scene, fragment, painted) {

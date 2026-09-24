@@ -137,6 +137,12 @@ pub struct Painted {
     /// not `Eq`. Two alphas that differ only in the sign of a zero compare unequal here, and the
     /// cost of that is one re-encoded fragment.
     pub alpha: u32,
+    /// A fingerprint of the corner radii the fragment was encoded with.
+    ///
+    /// The lowered style holds no radii, so a restyle that rounds or squares a corner and changes
+    /// nothing else moves no other field here. Without it, a box that squares one corner replays
+    /// the curve it had.
+    pub corners: u64,
     /// A fingerprint of the caret and the selection bands drawn with a line fragment, and zero
     /// for a fragment that is not a line.
     ///

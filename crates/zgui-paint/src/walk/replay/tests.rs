@@ -50,6 +50,7 @@ fn painted(style: u32) -> crate::walk::replay::Painted {
         text_fill: 0,
         anim: 0,
         alpha: 1.0f32.to_bits(),
+        corners: 0,
         highlights: 0,
     }
 }
@@ -188,6 +189,32 @@ fn a_fragment_under_a_changed_folded_alpha_is_encoded_again() {
     };
     assert_eq!(cache.reuse(&scene, &same, dimmed), Reuse::Encode);
     // And the same alpha still replays, or every fragment of every document is encoded twice.
+    assert_ne!(cache.reuse(&scene, &same, painted(0)), Reuse::Encode);
+}
+
+#[test]
+fn a_fragment_whose_corners_moved_is_encoded_however_still_it_stayed() {
+    // The lowered style holds no radii, so the corner fingerprint is the only field that moves.
+    let mut cache = PaintCache::new();
+    let mut scene = scene();
+    let same = fragment(0.0, 0.0);
+    cache.encoded(
+        &mut scene,
+        &same,
+        painted(0),
+        Encoding {
+            chunk: zgui_scene::ChunkPrims::default(),
+            resources: &[],
+            complete: true,
+        },
+        &NoResources,
+    );
+    scene.begin_frame(Size::new(256, 256));
+    let squared = crate::walk::replay::Painted {
+        corners: 1,
+        ..painted(0)
+    };
+    assert_eq!(cache.reuse(&scene, &same, squared), Reuse::Encode);
     assert_ne!(cache.reuse(&scene, &same, painted(0)), Reuse::Encode);
 }
 
