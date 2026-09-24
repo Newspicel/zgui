@@ -131,8 +131,11 @@ impl<T: Clone + PartialEq + 'static> Controllable<T> {
     ///
     /// Under a [`Binding::Controlled`] this reports and waits: the value does not move until the
     /// caller moves it, which is what makes "the caller refused the change" expressible at all.
+    ///
+    /// A write after the owning scope is gone does nothing. An event can reach a listener of a
+    /// component in the same frame that removes it.
     pub fn set(&self, next: T) {
-        if self.get_untracked() == next {
+        if !self.is_alive() || self.get_untracked() == next {
             return;
         }
         match self.binding {
@@ -144,8 +147,16 @@ impl<T: Clone + PartialEq + 'static> Controllable<T> {
         }
     }
 
+    /// Whether the scope that owns the value still exists.
+    fn is_alive(&self) -> bool {
+        self.internal.try_with_untracked(|_| ()).is_some()
+    }
+
     /// Reads the value, changes it, and writes it back.
     pub fn update(&self, change: impl FnOnce(&mut T)) {
+        if !self.is_alive() {
+            return;
+        }
         let mut next = self.get_untracked();
         change(&mut next);
         self.set(next);
@@ -163,6 +174,9 @@ impl<T: Clone + PartialEq + 'static> Copy for Controllable<T> {}
 impl Controllable<bool> {
     /// Flips a boolean value.
     pub fn toggle(&self) {
+        if !self.is_alive() {
+            return;
+        }
         self.set(!self.get_untracked());
     }
 }
@@ -335,5 +349,19 @@ mod tests {
 
         assert_eq!(*reads.borrow(), [false, true, false]);
         scope.unmount();
+    }
+
+    #[test]
+    fn a_write_after_the_scope_is_gone_does_nothing() {
+        install().ok();
+        let scope = Mounted::new();
+        let (open, seen) = scope.with(|| {
+            let (on_change, seen) = recorder();
+            (Controllable::uncontrolled(false, Some(on_change)), seen)
+        });
+        scope.unmount();
+        open.set(true);
+        open.toggle();
+        assert!(seen.borrow().is_empty());
     }
 }
