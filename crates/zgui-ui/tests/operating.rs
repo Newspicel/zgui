@@ -443,6 +443,35 @@ fn a_drawer_opens_and_closes_ten_times_running() {
     );
 }
 
+/// A menu behind a button that refuses to open it.
+#[component]
+fn DisabledMenuPage() -> impl IntoView {
+    view! {
+        column(class = "page") {
+            DropdownMenu {
+                DropdownMenuTrigger(disabled = true) {"Account"}
+                DropdownMenuContent {
+                    MenuItem {"Settings"}
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn a_disabled_dropdown_trigger_opens_nothing() {
+    let mut stage = Stage::open(SHEET, || view! { DisabledMenuPage() });
+    stage.click_saying("Account");
+    stage.settle();
+    stage.key(NamedKey::ArrowDown);
+    stage.settle();
+
+    assert!(
+        !stage.shows("Settings"),
+        "a press on a disabled trigger opened its menu"
+    );
+}
+
 // ---- a label ------------------------------------------------------------------------------------
 
 /// A menu whose items are grouped under a heading.

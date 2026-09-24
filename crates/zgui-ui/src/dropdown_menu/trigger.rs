@@ -1,6 +1,7 @@
 //! The button a dropdown menu drops out of.
 
 use zgui::prelude::*;
+use zgui::reactive::LocalStorage;
 use zgui::vocab::{HasPopup, Key, NamedKey};
 use zgui::{component, view};
 
@@ -40,6 +41,9 @@ pub fn DropdownMenuTrigger(
     /// How big it is.
     #[prop(default = ButtonSize::Md)]
     size: ButtonSize,
+    /// Whether it refuses to open the menu. A disabled trigger leaves the focus order.
+    #[prop(into, default = Signal::stored_local(false))]
+    disabled: Signal<bool, LocalStorage>,
     /// Classes merged after the button's own.
     #[prop(into, optional)]
     class: Classes,
@@ -59,6 +63,7 @@ pub fn DropdownMenuTrigger(
             let opens = matches!(ev.key, Key::Named(NamedKey::ArrowDown | NamedKey::ArrowUp));
             if let Some(state) = state
                 && opens
+                && !disabled.get_untracked()
                 && !state.is_open_untracked()
             {
                 state.open();
@@ -75,10 +80,13 @@ pub fn DropdownMenuTrigger(
             node_ref = node,
             variant = variant,
             size = size,
+            disabled = disabled,
             on:key_down = on_key_down,
             on:pointer_down = activate_on_press(),
             on:click = move |_| {
-                if let Some(state) = state {
+                if let Some(state) = state
+                    && !disabled.get_untracked()
+                {
                     state.toggle();
                 }
             },
