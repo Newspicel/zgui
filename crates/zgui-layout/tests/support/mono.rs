@@ -60,6 +60,11 @@ pub(crate) struct MonoShaper {
 impl ParagraphShaper for MonoShaper {
     type Engine = MonoLayout;
 
+    /// A fresh shaper: the metrics are fixed, so a fork answers what the original does.
+    fn fork(&self) -> Option<Self> {
+        Some(Self::default())
+    }
+
     fn shape(&mut self, content: &ParagraphContent<'_>) -> ShapedParagraph<Self::Engine> {
         self.shapes += 1;
         let size = |offset: usize| {

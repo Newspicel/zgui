@@ -172,6 +172,18 @@ pub(crate) fn compute<C: MeasureContent>(
                 computed,
                 ..
             } = *memo;
+            // The probe may have run on another measurer. A pooled batch hands each worker its
+            // own paragraph cache, so the kept pass shapes the paragraph again where this
+            // measurer does not hold it. Where it does, this is a lookup.
+            let content = ParagraphContent {
+                text: &generated.text,
+                map: &generated.map,
+                runs: &generated.runs,
+                boxes: &boxes.geometry,
+                paragraph: &generated.paragraph,
+                scale,
+            };
+            tree.content().shape_keyed(summary.key, &content);
             (
                 generated,
                 root_strut,
