@@ -847,7 +847,7 @@ impl Window {
     fn attach_caret(&mut self, node: Option<zgui_dom::NodeKey>) {
         let editable = node.filter(|node| {
             let document = self.document.borrow();
-            crate::editing::Editors::is_editable(&document, *node)
+            crate::editing::Editors::is_selectable(&document, *node)
         });
         let Some(node) = editable else {
             self.carets.stop();

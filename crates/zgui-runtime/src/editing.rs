@@ -137,6 +137,38 @@ impl Editors {
                 .intersects(zgui_vocab::UiState::DISABLED | zgui_vocab::UiState::READ_ONLY)
     }
 
+    /// Whether a person can select an element's text.
+    ///
+    /// Every editable element, and every read-only one as well: a read-only field keeps its text
+    /// selectable and copyable, and refuses every change to it.
+    pub fn is_selectable(document: &Document, node: NodeKey) -> bool {
+        let Some(index) = document.store().index_of(node) else {
+            return false;
+        };
+        Self::holds_text(document, node)
+            && !document
+                .store()
+                .core(index)
+                .ui_state()
+                .contains(zgui_vocab::UiState::DISABLED)
+    }
+
+    /// Whether an element's text can be selected and cannot be changed.
+    fn is_read_only(document: &Document, node: NodeKey) -> bool {
+        Self::is_selectable(document, node) && !Self::is_editable(document, node)
+    }
+
+    /// Whether a command leaves the text as it is.
+    fn keeps_text(command: &zgui_edit::Command) -> bool {
+        matches!(
+            command,
+            zgui_edit::Command::Move(_)
+                | zgui_edit::Command::Select(_)
+                | zgui_edit::Command::SelectAll
+                | zgui_edit::Command::Copy
+        )
+    }
+
     /// Whether an element is one whose text this vocabulary keeps an editing model for.
     ///
     /// The kind alone, without asking whether a person may type into it. A disabled or read-only
@@ -218,6 +250,15 @@ impl Editors {
         if Self::would_break_a_line(event) && !Self::takes_line_breaks(document, node) {
             return Edited::default();
         }
+        if Self::is_read_only(document, node) {
+            // A read-only element takes the keys that move, select and copy, and nothing else.
+            let Some(command) =
+                zgui_edit::editor::keys::command(event, modifiers).filter(Self::keeps_text)
+            else {
+                return Edited::default();
+            };
+            return self.deliver(document, node, |editor| editor.apply(command));
+        }
         self.deliver(document, node, |editor| editor.key(event, modifiers))
     }
 
@@ -239,6 +280,9 @@ impl Editors {
 
     /// Advances an element's composition, writing whatever changed into the document.
     pub fn ime(&mut self, document: &Document, node: NodeKey, event: &ImeEvent) -> Edited {
+        if !Self::is_editable(document, node) {
+            return Edited::default();
+        }
         self.deliver(document, node, |editor| editor.ime(event))
     }
 
@@ -323,13 +367,15 @@ impl Editors {
     }
 
     /// Runs one thing against an element's model and writes the result out.
+    ///
+    /// A read-only element reaches here only with a command that keeps its text.
     fn deliver(
         &mut self,
         document: &Document,
         node: NodeKey,
         act: impl FnOnce(&mut Editor) -> Response,
     ) -> Edited {
-        if !Self::is_editable(document, node) {
+        if !Self::is_selectable(document, node) {
             return Edited::default();
         }
         let Some(index) = document.store().index_of(node) else {
@@ -377,6 +423,9 @@ impl Editors {
                 .collect::<Vec<_>>()
                 .join(" ")
         };
+        if !Self::is_editable(document, node) {
+            return Edited::default();
+        }
         // Text that boiled away entirely — an empty clipboard, a lone line break — pastes
         // nothing rather than replacing the selection with nothing, which would be a delete.
         if text.is_empty() {
@@ -653,6 +702,76 @@ mod tests {
         // that stayed in the model alone would leave the two lines drawn side by side.
         assert_eq!(text_of(&document, nodes[0]), "\n");
         assert_eq!(text_of(&document, nodes[1]), "ab");
+    }
+
+    #[test]
+    fn a_read_only_field_selects_and_copies_its_text() {
+        let (document, field) = field("field", &["abc"]);
+        document
+            .edit(&EverythingMatters, |edit| {
+                edit.set_state(field, zgui_vocab::UiState::READ_ONLY, true);
+            })
+            .expect("not poisoned");
+        let key = document.store().key_of(field);
+        let mut editors = Editors::new();
+
+        let all = editors.key(&document, key, &letter("a"), Modifiers::CONTROL);
+        assert!(all.handled, "select all is refused");
+        assert_eq!(all.selection, Some(0..3));
+
+        let copied = editors.key(&document, key, &letter("c"), Modifiers::CONTROL);
+        assert_eq!(copied.clipboard.as_deref(), Some("abc"));
+
+        let placed = editors.select(&document, key, 1..2);
+        assert!(placed.handled, "a pointer selection is refused");
+        assert_eq!(editors.selection(key).map(|held| held.range()), Some(1..2));
+    }
+
+    #[test]
+    fn a_read_only_field_refuses_every_change() {
+        let (document, field) = field("field", &["abc"]);
+        document
+            .edit(&EverythingMatters, |edit| {
+                edit.set_state(field, zgui_vocab::UiState::READ_ONLY, true);
+            })
+            .expect("not poisoned");
+        let key = document.store().key_of(field);
+        let mut editors = Editors::new();
+        editors.select(&document, key, 0..3);
+
+        for (event, modifiers) in [
+            (letter("x"), Modifiers::CONTROL),
+            (letter("v"), Modifiers::CONTROL),
+            (letter("z"), Modifiers::CONTROL),
+            (letter("q"), Modifiers::NONE),
+        ] {
+            let edited = editors.key(&document, key, &event, modifiers);
+            assert!(!edited.handled, "{event:?} was taken");
+            assert_eq!(edited.value, None);
+            assert_eq!(edited.clipboard, None);
+            assert!(!edited.paste);
+        }
+        assert_eq!(editors.paste(&document, key, "zz").value, None);
+        let node = document
+            .store()
+            .core(field)
+            .first_child()
+            .expect("the field's text node");
+        assert_eq!(text_of(&document, node), "abc");
+    }
+
+    #[test]
+    fn a_disabled_field_is_never_selected() {
+        let (document, field) = field("field", &["abc"]);
+        document
+            .edit(&EverythingMatters, |edit| {
+                edit.set_state(field, zgui_vocab::UiState::DISABLED, true);
+            })
+            .expect("not poisoned");
+        let key = document.store().key_of(field);
+        let mut editors = Editors::new();
+        assert!(!Editors::is_selectable(&document, key));
+        assert!(!editors.select(&document, key, 0..3).handled);
     }
 
     #[test]

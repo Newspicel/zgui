@@ -54,9 +54,11 @@ impl Window {
             return (Plan::empty(), Vec::new());
         };
         let document = self.document.borrow();
-        if !crate::editing::Editors::is_editable(&document, node) {
+        if !crate::editing::Editors::is_selectable(&document, node) {
             return (Plan::empty(), Vec::new());
         }
+        // A read-only element draws its selection and no caret.
+        let editable = crate::editing::Editors::is_editable(&document, node);
         // The model's own selection, not the record beside it: the record is a byte range and has
         // forgotten which end the caret is at and which of the two places a boundary offset means.
         let Some(selection) = self.editors.selection(node) else {
@@ -79,7 +81,7 @@ impl Window {
             selection,
             color,
             self.scale,
-            self.carets.blink().is_visible(now),
+            editable && self.carets.blink().is_visible(now),
         );
         let drawn = self.absolute_rects(&layout, box_, &plan);
         (plan, drawn)

@@ -63,12 +63,12 @@ impl Window {
 
     /// What `cursor: auto` resolves to over one element.
     ///
-    /// The text bar over anything a caret can be placed in, and the arrow over everything else.
+    /// The text bar over anything whose text can be selected, and the arrow over everything else.
     /// That is what `auto` means on a desktop, and it is the reason the keyword cannot be resolved
     /// where the property is lowered: whether an element is editable is a fact about the document
     /// and its host, which a style says nothing about.
     fn automatic_cursor(&self, node: NodeKey) -> CursorStyle {
-        if self.editable_at(Some(node)).is_some() {
+        if self.selectable_text_at(Some(node)).is_some() {
             CursorStyle::Text
         } else {
             CursorStyle::Default

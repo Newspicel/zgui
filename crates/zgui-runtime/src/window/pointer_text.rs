@@ -62,7 +62,7 @@ impl Window {
 
     /// Places the caret where a press landed, and anchors a drag there.
     fn press_into_text(&mut self, pointer: &PointerEvent, target: Option<NodeKey>) -> bool {
-        let Some(node) = self.editable_at(target) else {
+        let Some(node) = self.selectable_text_at(target) else {
             self.selecting = None;
             return false;
         };
@@ -128,17 +128,17 @@ impl Window {
         edited.handled
     }
 
-    /// The nearest editable element at or above a node, if there is one.
+    /// The nearest element with selectable text at or above a node, if there is one.
     ///
     /// At or above, because a press lands on the text node's box or on an inline span inside the
     /// field rather than on the field itself, and a caret placed only when the field was hit
     /// exactly is a caret that never moves for a click on a letter.
-    pub(crate) fn editable_at(&self, node: Option<NodeKey>) -> Option<NodeKey> {
+    pub(crate) fn selectable_text_at(&self, node: Option<NodeKey>) -> Option<NodeKey> {
         let document = self.document.borrow();
         let mut index = document.store().index_of(node?)?;
         loop {
             let key = document.store().key_of(index);
-            if crate::editing::Editors::is_editable(&document, key) {
+            if crate::editing::Editors::is_selectable(&document, key) {
                 return Some(key);
             }
             index = document.store().core(index).parent()?;

@@ -29,8 +29,9 @@ impl Window {
 
     /// The used value of `user-select` at one element.
     ///
-    /// `auto` on an *editable* element is `text` and stops the walk, which is the specification's
-    /// own first case: a field inside a panel that has switched selection off is still a field.
+    /// `auto` on an element with selectable text is `text` and stops the walk, which is the
+    /// specification's own first case: a field inside a panel that has switched selection off is
+    /// still a field. A read-only field counts as well.
     fn used_user_select(&self, node: NodeKey) -> UserSelectValue {
         let document = self.document.borrow();
         let Some(mut index) = document.store().index_of(node) else {
@@ -41,7 +42,7 @@ impl Window {
             if let Some(style) = document.node(index).primary_style() {
                 match style.get_ui().user_select {
                     UserSelectValue::Auto => {
-                        if crate::editing::Editors::is_editable(&document, key) {
+                        if crate::editing::Editors::is_selectable(&document, key) {
                             return UserSelectValue::Text;
                         }
                     }
