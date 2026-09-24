@@ -12,9 +12,9 @@ const ARROW_SQUARE: f32 = 10.0;
 
 /// How far the arrow is sunk behind the panel's edge, in CSS pixels.
 ///
-/// The sheet sinks it by the same length, so that the join between the two is under the panel
-/// rather than on its edge.
-const ARROW_SINK: f32 = 2.0;
+/// The sheet centres the arrow on the inner line of the panel's one-pixel edge, so the arrow is
+/// sunk by the width of that edge.
+const ARROW_SINK: f32 = 1.0;
 
 /// How far the arrow's tip stands past the panel's edge, in CSS pixels.
 ///
@@ -48,8 +48,8 @@ mod tests {
 
     #[test]
     fn the_arrow_reaches_out_of_the_panel() {
-        // Half the diagonal of a ten pixel square, less the two pixels it is sunk by.
-        assert!((ARROW_REACH - 5.0710678).abs() < 1.0e-4);
+        // Half the diagonal of a ten pixel square, less the one pixel it is sunk by.
+        assert!((ARROW_REACH - 6.0710678).abs() < 1.0e-4);
     }
 
     #[test]

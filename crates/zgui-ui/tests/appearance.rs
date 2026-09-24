@@ -579,3 +579,50 @@ fn a_tooltip_and_its_arrow_go_out_together() {
          tooltip was up, so it is not leaving with it"
     );
 }
+
+/// The page sheet with the three tooltip tokens set to colours nothing else on the page uses.
+const TOOLTIP_TONE_SHEET: &str =
+    ":root { background-color: #ffffff; color: #101010; font-family: sans-serif }
+     :root:root {
+         --zui-color-tooltip: #204060;
+         --zui-color-tooltip-foreground: #f0f0f0;
+         --zui-color-tooltip-border: #ff0000;
+     }
+     .page { padding: 32px; gap: 32px; align-items: flex-start }";
+
+#[test]
+fn a_tooltip_and_its_arrow_take_the_tooltip_tokens() {
+    // The tokens decide the fill and the edge. The arrow carries both, so it is the one box that
+    // shows the fill and the edge together.
+    let mut stage = match Stage::open(TOOLTIP_TONE_SHEET, tooltip()) {
+        Some(stage) => stage,
+        None => {
+            eprintln!("skipped: no usable graphics device");
+            return;
+        }
+    };
+    let trigger = control_saying(&stage, "Save");
+    stage.move_to(stage.centre_of(trigger));
+    stage.wait(SETTLED);
+    let arrow = tooltip_arrow(&stage).expect("the tooltip drew its arrow");
+    let centre = Point::new(
+        DevicePx(arrow.origin.x.0 + arrow.size.width.0 / 2.0),
+        DevicePx(arrow.origin.y.0 + arrow.size.height.0 / 2.0),
+    );
+    let near = |seen: (u8, u8, u8), want: (u8, u8, u8)| {
+        seen.0.abs_diff(want.0) <= 8 && seen.1.abs_diff(want.1) <= 8 && seen.2.abs_diff(want.2) <= 8
+    };
+
+    let fill = stage.colour_at(centre);
+    assert!(
+        near(fill, (0x20, 0x40, 0x60)),
+        "the arrow is filled with {fill:?}"
+    );
+    assert!(
+        stage
+            .colours_in(arrow)
+            .into_iter()
+            .any(|seen| seen.0 > 160 && seen.1 < 90 && seen.2 < 90),
+        "the arrow carries no edge in the tooltip border colour"
+    );
+}

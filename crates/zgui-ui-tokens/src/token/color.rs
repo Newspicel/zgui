@@ -70,6 +70,19 @@ group! {
         /// Text on a popover.
         popover_foreground => "popover-foreground", light = "oklch(0.145 0 0)",
             dark = "oklch(0.985 0 0)";
+        /// A tooltip's surface.
+        ///
+        /// The page's text colour by default, so a tooltip inverts the page.
+        tooltip => "tooltip", light = "var(--zui-color-foreground)",
+            dark = "var(--zui-color-foreground)";
+        /// Text on a tooltip.
+        tooltip_foreground => "tooltip-foreground", light = "var(--zui-color-background)",
+            dark = "var(--zui-color-background)";
+        /// The edge of a tooltip and its arrow.
+        ///
+        /// The tooltip's own fill by default, so the edge does not show.
+        tooltip_border => "tooltip-border", light = "var(--zui-color-tooltip)",
+            dark = "var(--zui-color-tooltip)";
         /// The solid fill of the control that carries the main action.
         primary => "primary", light = "oklch(0.205 0 0)", dark = "oklch(0.922 0 0)";
         /// Text on that fill.
@@ -177,8 +190,8 @@ mod tests {
     fn the_two_schemes_are_two_sets_of_colours_rather_than_one_set_over_two_ramps() {
         // The property this test protects, stated as the thing that changed: a semantic token now
         // holds a colour, so the dark scheme is a second colour and not the same `var()` over a
-        // flipped ramp. Anything still written as a `var()` is deliberate indirection, and there
-        // is exactly one of those.
+        // flipped ramp. Anything still written as a `var()` is deliberate indirection: the danger
+        // alias and the tooltip, which inverts the page by default.
         let light = ColorTokens::light();
         let indirect: Vec<&'static str> = light
             .pairs()
@@ -186,7 +199,15 @@ mod tests {
             .filter(|(_, value)| value.starts_with("var("))
             .map(|(name, _)| *name)
             .collect();
-        assert_eq!(indirect, ["--zui-color-danger"]);
+        assert_eq!(
+            indirect,
+            [
+                "--zui-color-tooltip",
+                "--zui-color-tooltip-foreground",
+                "--zui-color-tooltip-border",
+                "--zui-color-danger",
+            ]
+        );
     }
 
     #[test]
