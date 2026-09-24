@@ -4,13 +4,14 @@ mod placement;
 mod scale;
 mod solve;
 
+use zgui::geom::{DevicePx, Point};
 use zgui::prelude::*;
 use zgui::reactive::{LocalStorage, RenderEffect, RwSignal};
 use zgui::{component, view};
 
 pub use crate::popper::placement::{Align, Placement, Side};
 use crate::popper::scale::Density;
-pub use crate::popper::solve::{PopperOptions, Solution, WindowRect, solve};
+pub use crate::popper::solve::{PopperOptions, Solution, WindowRect, anchor_point, solve};
 
 /// Places its children against an anchor, and keeps them inside the window.
 ///
@@ -57,6 +58,13 @@ pub use crate::popper::solve::{PopperOptions, Solution, WindowRect, solve};
 ///
 /// ```text
 /// .select__list { width: var(--zui-popper-anchor-width); }
+/// ```
+///
+/// `--zui-popper-anchor-x` and `--zui-popper-anchor-y` carry the centre of the anchor, measured
+/// from the corner of the surface and held inside it. An arrow points at the anchor from these:
+///
+/// ```text
+/// .tooltip__arrow { left: var(--zui-popper-anchor-x, 50%); }
 /// ```
 ///
 /// # Two kinds of pixel
@@ -229,6 +237,23 @@ pub fn Popper(
             .get()
             .map(|rect| px(density.css(rect.size.width.0.round())))
     };
+    // The centre of the anchor, measured from the corner of the surface as it is drawn.
+    let anchor_center = Signal::derive_local(move || {
+        let solved = solution.get()?;
+        let anchor = anchor_box.get()?;
+        let density = Density::reported(positioner.scale());
+        let corner = Point::new(
+            DevicePx(solved.origin.x.0.round()),
+            DevicePx(solved.origin.y.0.round()),
+        );
+        let point = anchor_point(anchor, corner, floating_size.get());
+        Some((
+            density.css(point.x.0.round()),
+            density.css(point.y.0.round()),
+        ))
+    });
+    let anchor_x = move || anchor_center.get().map(|(x, _)| px(x));
+    let anchor_y = move || anchor_center.get().map(|(_, y)| px(y));
     let side = move || {
         solution
             .get()
@@ -249,6 +274,8 @@ pub fn Popper(
             style:top = top,
             style:visibility = visibility,
             style:--zui-popper-anchor-width = anchor_width,
+            style:--zui-popper-anchor-x = anchor_x,
+            style:--zui-popper-anchor-y = anchor_y,
             attr:data-side = side,
             attr:data-align = align
         ) {

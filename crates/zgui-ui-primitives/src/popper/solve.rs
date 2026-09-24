@@ -114,6 +114,38 @@ pub fn solve(
     }
 }
 
+/// The centre of `anchor`, measured from the corner of a surface at `origin` and held inside it.
+///
+/// An arrow on the surface points at this point. A surface that slides along the anchor's edge
+/// keeps its arrow on the anchor, and an anchor wider than the surface puts the arrow on the
+/// surface's nearest edge.
+///
+/// ```
+/// use zgui::geom::{DevicePx, Point, Rect, Size};
+/// use zgui_ui_primitives::popper::anchor_point;
+///
+/// let anchor = Rect::new(
+///     Point::new(DevicePx(100.0), DevicePx(40.0)),
+///     Size::new(DevicePx(60.0), DevicePx(20.0)),
+/// );
+/// let origin = Point::new(DevicePx(100.0), DevicePx(0.0));
+/// let point = anchor_point(anchor, origin, Size::new(DevicePx(200.0), DevicePx(30.0)));
+/// assert_eq!(point.x.0, 30.0);
+/// ```
+#[must_use]
+pub fn anchor_point(
+    anchor: WindowRect,
+    origin: Point<DevicePx, Device>,
+    floating: Size<DevicePx, Device>,
+) -> Point<DevicePx, Device> {
+    let x = anchor.origin.x.0 + anchor.size.width.0 / 2.0 - origin.x.0;
+    let y = anchor.origin.y.0 + anchor.size.height.0 / 2.0 - origin.y.0;
+    Point::new(
+        DevicePx(x.clamp(0.0, floating.width.0.max(0.0))),
+        DevicePx(y.clamp(0.0, floating.height.0.max(0.0))),
+    )
+}
+
 /// How much room there is between the anchor and the window's edge on `side`.
 fn room_on(side: Side, anchor: WindowRect, viewport: WindowRect) -> f32 {
     match side {
@@ -245,7 +277,7 @@ fn overflow_of(
 mod tests {
     use zgui::geom::{DevicePx, Point, Rect, Size};
 
-    use super::{PopperOptions, Solution, WindowRect, solve};
+    use super::{PopperOptions, Solution, WindowRect, anchor_point, solve};
     use crate::popper::placement::{Align, Placement, Side};
 
     fn rect(x: f32, y: f32, width: f32, height: f32) -> WindowRect {
@@ -422,5 +454,28 @@ mod tests {
         assert_eq!(solution.placement.side, Side::Top);
         assert!(solution.origin.y.0 >= 50.0);
         assert!(solution.origin.x.0 >= 108.0);
+    }
+
+    #[test]
+    fn the_anchor_point_follows_a_surface_aligned_to_the_start() {
+        let anchor = rect(300.0, 200.0, 60.0, 20.0);
+        let floating = size(240.0, 30.0);
+        let options = PopperOptions {
+            placement: Placement::new(Side::Top, Align::Start),
+            ..PopperOptions::default()
+        };
+        let solution = solve(anchor, floating, window(), &options);
+        let point = anchor_point(anchor, solution.origin, floating);
+        assert_eq!(point.x.0, 30.0);
+        assert_eq!(point.y.0, 30.0);
+    }
+
+    #[test]
+    fn the_anchor_point_stays_inside_the_surface() {
+        let anchor = rect(0.0, 200.0, 600.0, 20.0);
+        let floating = size(100.0, 30.0);
+        let point = anchor_point(anchor, Point::new(DevicePx(0.0), DevicePx(160.0)), floating);
+        assert_eq!(point.x.0, 100.0);
+        assert_eq!(point.y.0, 30.0);
     }
 }

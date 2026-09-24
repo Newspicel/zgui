@@ -56,29 +56,31 @@ style! { pub TooltipStyle =>
         border-radius: 2px;
         background-color: var(--zui-color-tooltip);
     }"
+    // The arrow points at the centre of the trigger, which the positioner publishes. It keeps
+    // clear of the rounded corners of the panel.
     ".zui-overlay-positioner[data-side=\"top\"] .zui-tooltip__arrow {
-        left: 50%;
+        left: clamp(10px, var(--zui-popper-anchor-x, 50%), calc(100% - 10px));
         bottom: 0;
         border-right-width: 1px;
         border-bottom-width: 1px;
         transform: translate(-50%, 50%) rotate(45deg);
     }"
     ".zui-overlay-positioner[data-side=\"bottom\"] .zui-tooltip__arrow {
-        left: 50%;
+        left: clamp(10px, var(--zui-popper-anchor-x, 50%), calc(100% - 10px));
         top: 0;
         border-top-width: 1px;
         border-left-width: 1px;
         transform: translate(-50%, -50%) rotate(45deg);
     }"
     ".zui-overlay-positioner[data-side=\"left\"] .zui-tooltip__arrow {
-        top: 50%;
+        top: clamp(10px, var(--zui-popper-anchor-y, 50%), calc(100% - 10px));
         right: 0;
         border-top-width: 1px;
         border-right-width: 1px;
         transform: translate(50%, -50%) rotate(45deg);
     }"
     ".zui-overlay-positioner[data-side=\"right\"] .zui-tooltip__arrow {
-        top: 50%;
+        top: clamp(10px, var(--zui-popper-anchor-y, 50%), calc(100% - 10px));
         left: 0;
         border-bottom-width: 1px;
         border-left-width: 1px;
