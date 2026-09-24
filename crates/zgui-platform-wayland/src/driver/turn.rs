@@ -12,7 +12,8 @@ use crate::cx::WaylandCx;
 use crate::driver::WaylandState;
 use crate::waker::PingWaker;
 
-/// Runs `handler` against this machine's compositor until the last surface closes.
+/// Runs `handler` against this machine's compositor until the last surface closes, then writes
+/// the latency trace when `ZGUI_LATENCY` names a file.
 ///
 /// # Errors
 ///
@@ -21,7 +22,9 @@ use crate::waker::PingWaker;
 pub fn run(handler: Box<dyn AppHandler>) -> Result<(), PlatformError> {
     let mut app = WaylandApp::new(handler)?;
     zgui_profile::latency::start_epoch();
-    app.run()
+    let finished = app.run();
+    zgui_profile::latency::flush();
+    finished
 }
 
 /// An application, as the loop sees it.
