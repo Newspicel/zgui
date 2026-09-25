@@ -112,7 +112,7 @@ where
     let own = Attrs::new()
         .class_toggle(zgui::view::ClassName::new("zui-virtual-list"), true)
         .custom_property(CustomPropertyName::new("zui-virtual-row"), move || {
-            Some(format!("{}px", row_size.get()))
+            row_size.try_get().map(|size| format!("{size}px"))
         })
         .a11y_from(semantics);
 
@@ -124,10 +124,11 @@ where
         scroll(node_ref = viewport, class = VirtualListStyle::CLASS, {..own}, {..attrs}, class = class) {
             box(
                 class = "zui-virtual-list__pane",
-                style:padding-top = move || Some(px(window.get().lead)),
-                style:padding-bottom = move || Some(px(window.get().trail))
+                style:padding-top = move || window.try_get().map(|seen| px(seen.lead)),
+                style:padding-bottom = move || window.try_get().map(|seen| px(seen.trail))
             ) {
-                for index in move || window.get().indices(), key = |index: &usize| *index {
+                for index in move || window.try_get().map(|seen| seen.indices()).unwrap_or_default(),
+                    key = |index: &usize| *index {
                     Row(index = index, total = count, row = Rc::clone(&row), {..Attrs::new()})
                 }
             }
@@ -157,8 +158,12 @@ where
     V: IntoView + 'static,
     F: Fn(usize) -> V + 'static,
 {
-    let semantics = A11yBinding::new(Role::ListItem)
-        .step(move |a11y| a11y.set_position(index + 1, total.get().max(index + 1)));
+    let semantics = A11yBinding::new(Role::ListItem).step(move |a11y| {
+        a11y.set_position(
+            index + 1,
+            total.try_get().unwrap_or_default().max(index + 1),
+        )
+    });
     let own = Attrs::new()
         .class_toggle(zgui::view::ClassName::new("zui-virtual-list__row"), true)
         .attribute(

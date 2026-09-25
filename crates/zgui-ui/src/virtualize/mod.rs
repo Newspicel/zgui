@@ -92,8 +92,15 @@ impl Virtualize {
         let row_size = row_size.into();
         let scroll = viewport.observe_scroll();
         Self {
+            // A list torn down while its scroll position still moves can find the count or the
+            // row height gone before the observation. Every input is read so that a gone one
+            // answers with an empty window.
             window: Signal::derive_local(move || {
-                let position = scroll.get();
+                let (Some(position), Some(count), Some(size)) =
+                    (scroll.try_get(), rows.try_get(), row_size.try_get())
+                else {
+                    return VirtualWindow::default();
+                };
                 // The observation answers in device pixels and the row height was declared in CSS
                 // pixels. Dividing here rather than multiplying the row height keeps the whole of
                 // the rest of this module in one space.
@@ -104,8 +111,8 @@ impl Virtualize {
                     1.0
                 };
                 window(
-                    rows.get(),
-                    row_size.get(),
+                    count,
+                    size,
                     position.scrollport.height.0 / scale,
                     position.offset.y.0 / scale,
                     overscan,
@@ -117,19 +124,19 @@ impl Virtualize {
     /// The rows worth building right now, subscribing to it.
     #[must_use]
     pub fn window(&self) -> VirtualWindow {
-        self.window.get()
+        self.window.try_get().unwrap_or_default()
     }
 
     /// The same, without subscribing.
     #[must_use]
     pub fn window_untracked(&self) -> VirtualWindow {
-        self.window.get_untracked()
+        self.window.try_get_untracked().unwrap_or_default()
     }
 
     /// The indices worth building right now, which is what a keyed list is driven by.
     #[must_use]
     pub fn indices(&self) -> Vec<usize> {
-        self.window.get().indices()
+        self.window().indices()
     }
 }
 
