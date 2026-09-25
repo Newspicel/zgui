@@ -11,10 +11,9 @@
 //! it, so a matching expectation of "nothing" would be satisfied by applying an empty sheet. The
 //! syntaxes this build rejects are pinned in their own module, and none of them appears here.
 //!
-//! Two expectations are worth pointing at because they look like bugs and are not. `[id]` and
-//! `[class]` match nothing: an element's identifier and its classes are not in its attribute table —
-//! they live in the node record, where matching asks about them far more cheaply — so an attribute
-//! selector naming either finds no attribute. And every positional expectation is written as though
+//! Two expectations are worth pointing at. `[id]` and `[class]` match every element with an
+//! identifier or a class, although both live in the node record and not in the attribute table.
+//! And every positional expectation is written as though
 //! the text nodes and the marker in the fixtures were not there, because they take no position:
 //! a node between two elements must not shift either one, or every sibling combinator in a document
 //! containing text answers differently from one that does not.
@@ -128,8 +127,14 @@ const PAGE: [(&str, &[&str]); 164] = [
     (r#"[data-state]"#, &["linkB"]),
     (r#"[data-kind]"#, &["leaf"]),
     (r#"[missing]"#, &[]),
-    (r#"[id]"#, &[]),
-    (r#"[class]"#, &[]),
+    (r#"[id]"#, &["title", "card", "save"]),
+    (
+        r#"[class]"#,
+        &[
+            "header", "title", "badge", "nav", "linkA", "linkB", "card", "i1", "i2", "i3", "i4",
+            "empty", "card2", "i5", "deep", "form", "save", "cancel", "check",
+        ],
+    ),
     (r#"[href='/a']"#, &["linkA"]),
     (r#"[href='/b']"#, &["linkB"]),
     (r#"[href^='/']"#, &["linkA", "linkB"]),
@@ -389,7 +394,10 @@ const LIST: [(&str, &[&str]); 42] = [
     (r#".list > *:first-child"#, &["r0"]),
     (r#".list > *:last-child"#, &["r9"]),
     (r#".even:nth-of-type(1)"#, &["r0"]),
-    (r#".row[class]"#, &[]),
+    (
+        r#".row[class]"#,
+        &["r0", "r1", "r2", "r3", "r4", "r5", "r6", "r7", "r8", "r9"],
+    ),
     (r#"ul.list li.row"#, &["r0", "r3", "r6", "r9"]),
 ];
 

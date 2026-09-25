@@ -147,6 +147,18 @@ impl<'doc> TElement for Node<'doc> {
     where
         F: FnMut(&style::LocalName),
     {
+        // `id` and `class` live in the node record, and an attribute selector names them all
+        // the same.
+        if self.record().id_attr().is_some() {
+            callback(&style::values::GenericAtomIdent(web_atoms::local_name!(
+                "id"
+            )));
+        }
+        if !self.store().classes_of(self.index()).is_empty() {
+            callback(&style::values::GenericAtomIdent(web_atoms::local_name!(
+                "class"
+            )));
+        }
         for attr in self.attrs() {
             callback(&style::values::GenericAtomIdent(
                 web_atoms::LocalName::from(attr.name.as_str()),

@@ -27,7 +27,7 @@ impl Node<'_> {
     ) -> bool {
         expect_element(self);
         let _ = namespace;
-        self.attr(&local_name.0)
-            .is_some_and(|value| operation.eval_str(value.as_str()))
+        self.attr_text(&local_name.0)
+            .is_some_and(|value| operation.eval_str(&value))
     }
 }
