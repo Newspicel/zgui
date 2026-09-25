@@ -36,6 +36,16 @@ pub use style::values::computed::color::ColorPropertyValue;
 /// assert_eq!(converted.to_premultiplied_srgb(), [1.0, 0.0, 0.0, 1.0]);
 /// ```
 ///
+/// A colour written in `hsl()` keeps its space and its hue:
+///
+/// ```
+/// use zgui_css::values::color::{AbsoluteColor, CascadedColorSpace, to_color};
+///
+/// let green = AbsoluteColor::new(CascadedColorSpace::Hsl, 120.0, 100.0, 50.0, 1.0);
+/// let [red, green, blue, _] = to_color(&green).to_premultiplied_srgb();
+/// assert!((red, green, blue) == (0.0, 1.0, 0.0));
+/// ```
+///
 /// A colour-valued property other than `color` itself may still be `currentColor`, which resolves
 /// against the element's own `color`; [`resolve`] is that step, and this is what it calls once the
 /// keyword is gone.
@@ -49,9 +59,16 @@ pub fn to_color(color: &AbsoluteColor) -> Color {
         None => color.to_color_space(style::color::ColorSpace::DisplayP3),
     };
     let components = color.raw_components();
+    let space = to_space(color.color_space).unwrap_or(ColorSpace::DisplayP3);
+    // The cascade holds the second and third components of `hsl()` and `hwb()` as percentages,
+    // and this framework holds them as fractions.
+    let scale = match space {
+        ColorSpace::Hsl | ColorSpace::Hwb => 0.01,
+        _ => 1.0,
+    };
     Color::new(
-        to_space(color.color_space).unwrap_or(ColorSpace::DisplayP3),
-        [components[0], components[1], components[2]],
+        space,
+        [components[0], components[1] * scale, components[2] * scale],
         components[3],
     )
 }
