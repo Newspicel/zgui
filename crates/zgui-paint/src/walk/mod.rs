@@ -303,6 +303,7 @@ impl Painter {
             decorations: Decorations::new(),
             text_fills: TextFills::new(),
             named: Vec::new(),
+            shapes: rustc_hash::FxHashMap::default(),
         };
         stacking::walk(input.store, root, &mut pass);
         let report = pass.report;
@@ -375,9 +376,35 @@ struct Pass<'a, 'b> {
     text_fills: TextFills,
     /// The rasters the fragment currently being encoded has named, reused between fragments.
     named: Vec<AtlasKey>,
+    /// The fingerprint of what each coordinate system does to shapes, by name, for this frame.
+    shapes: rustc_hash::FxHashMap<zgui_scene::SpatialId, u64>,
 }
 
 impl Pass<'_, '_> {
+    /// A fingerprint of what the matrix `space` resolves to does to shapes.
+    ///
+    /// The translation is left out. A recording holds its instances in their own space and the
+    /// renderer places them through the matrix at draw time, so what a recording depends on is
+    /// the scale, the turn and the projection it was encoded under: the density a drawing is
+    /// rasterised at and whether a run of text stays upright. A pan moves only the translation,
+    /// and every recording under it replays.
+    fn shape_hash(&mut self, space: zgui_scene::SpatialId) -> u64 {
+        if let Some(&held) = self.shapes.get(&space) {
+            return held;
+        }
+        use zgui_scene::Content;
+        let mut matrix = self
+            .scene
+            .spatial
+            .resolve(space)
+            .unwrap_or(zgui_geom::Matrix4::IDENTITY);
+        matrix.columns[3][0] = 0.0;
+        matrix.columns[3][1] = 0.0;
+        matrix.columns[3][2] = 0.0;
+        let hash = matrix.content_hash();
+        self.shapes.insert(space, hash);
+        hash
+    }
     /// The alpha every colour is multiplied by right now.
     fn alpha(&self) -> f32 {
         self.alpha.iter().product::<f32>().clamp(0.0, 1.0)
@@ -648,7 +675,7 @@ impl Pass<'_, '_> {
             style: style_ref,
             clip,
             transform,
-            transform_hash: fragment.transform_hash,
+            transform_hash: self.shape_hash(transform),
             custom: match fragment.kind {
                 zgui_layout::FragmentKind::Custom => self
                     .input

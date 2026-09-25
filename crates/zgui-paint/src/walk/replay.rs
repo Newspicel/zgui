@@ -66,13 +66,14 @@ pub struct Painted {
     pub clip: ClipId,
     /// The coordinate system it is drawn in.
     pub transform: SpatialId,
-    /// A fingerprint of the matrix that coordinate system resolved to.
+    /// A fingerprint of what the matrix that coordinate system resolved to does to shapes.
     ///
     /// The name above is structural: it is the same name on the first frame of a movement and on
     /// the last, which is what makes moving something a write rather than a new identity. It is
     /// therefore not enough on its own to decide whether a recorded range may be replayed, because
-    /// a range is a set of instances that were encoded against a particular matrix. This is the
-    /// part of the comparison that a movement moves.
+    /// a range is a set of instances that were encoded against a particular scale and turn. The
+    /// translation is left out: the renderer places the instances through the matrix, so a range
+    /// replays under any translation of the space it was recorded in.
     pub transform_hash: u64,
     /// The revision of what a custom element paints, and zero for every other kind.
     ///
