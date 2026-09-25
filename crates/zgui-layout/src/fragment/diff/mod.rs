@@ -34,6 +34,7 @@ use crate::tree::store::LayoutStore;
 mod damage;
 mod dirty;
 mod geometry;
+mod rematrix;
 mod rigid;
 mod scratch;
 pub mod split;
@@ -556,6 +557,16 @@ impl<D: FrameDirty> Pass<'_, '_, D> {
             && placed.descent.shift == previous_shift
             && movement.is_none()
             && (!moved || (placed.descent.origin_stable && transform_stable));
+        // The same three inputs, with the matrix the one that moved: a pan or a zoom written on
+        // this box. A clean child is then carried onto the new matrix rather than composed again,
+        // because everything it holds but its device ink is measured in a space the write did not
+        // move. See [`rematrix`].
+        let carried = !transform_stable
+            && !own.intersects(Dirty::RESTACK | Dirty::SCROLL)
+            && placed.descent.shift == previous_shift
+            && movement.is_none()
+            && (!moved || placed.descent.origin_stable)
+            && rematrix::keeps_rectangles(placed.descent.matrix);
         // Deeper visits append their own regions past `children_end` and truncate them again, so
         // the indices walked here stay this box's children throughout.
         for index in children_mark..children_end {
@@ -566,6 +577,13 @@ impl<D: FrameDirty> Pass<'_, '_, D> {
             let folded = match movement {
                 _ if settled && clean && (size_stable || self.can_translate(child)) => {
                     self.cached(child)
+                }
+                _ if carried
+                    && clean
+                    && size_stable
+                    && self.drawn_under(child, placed.descent.clip) =>
+                {
+                    self.rematrix(child, placed.descent.matrix)
                 }
                 Some(movement) if clean && self.can_translate(child) => {
                     self.translate(child, movement)
@@ -778,6 +796,15 @@ impl<D: FrameDirty> Pass<'_, '_, D> {
     fn owed_by(&self, key: BoxKey, generator: Option<zgui_dom::NodeKey>) -> Owed {
         let source = self.store.get(key).and_then(|node| node.source);
         Owed::of(self.dirty, source, generator)
+    }
+
+    /// Whether `child`'s own piece is drawn under `clip`, the chain its parent now hands down.
+    fn drawn_under(&self, child: BoxKey, clip: ClipId) -> bool {
+        self.store
+            .fragments_of_box(child)
+            .first()
+            .and_then(|frag| self.store.fragment(*frag))
+            .is_some_and(|fragment| fragment.clip == clip)
     }
 
     /// What a subtree the walk did not descend into reported last time.
