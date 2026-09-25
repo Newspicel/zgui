@@ -21,15 +21,17 @@ use crate::vector::VectorItem;
 /// it lands in. The coordinate-system name is recorded beside it when the checks are on, exactly
 /// as [`Scene::record`] does for the frame's own log.
 macro_rules! tee {
-    ($self:ident, $kind:ident, $lane:ident, $space:expr, $ink:expr, $prim:expr) => {
+    ($self:ident, $kind:ident, $lane:ident, $space:expr, $slot:expr, $ink:expr, $prim:expr) => {
         if $self.capture.is_some() {
             // All three read before the capture is borrowed, because any of them would borrow the
             // scene. The order comes from the capture's own tree rather than the frame's: it says
             // where this primitive stands among the chunk's, which is what stays true after the
-            // frame it was encoded in is gone.
+            // frame it was encoded in is gone. Like the frame's tree, it compares rectangles on
+            // the device.
             let space = $space;
             let checking = $self.checking;
-            let order = $self.capture_order.insert($ink);
+            let placed = $self.on_device($slot, $ink);
+            let order = $self.capture_order.insert(placed);
             if let Some(capture) = &mut $self.capture {
                 let at = capture.$lane.len() as u32;
                 capture.ops.push(PaintOp::new(PrimitiveKind::$kind, at));
@@ -91,6 +93,7 @@ impl Scene {
             Quad,
             quads,
             self.space_at(quad.transform),
+            quad.transform,
             quad.ink(),
             quad
         );
@@ -122,6 +125,7 @@ impl Scene {
             Shaded,
             shaded,
             self.space_at(shaded.transform),
+            shaded.transform,
             shaded.ink(),
             shaded
         );
@@ -149,6 +153,7 @@ impl Scene {
             Shadow,
             shadows,
             self.space_at(shadow.transform),
+            shadow.transform,
             shadow.ink(),
             shadow
         );
@@ -176,6 +181,7 @@ impl Scene {
             Decoration,
             decorations,
             self.space_at(decoration.transform),
+            decoration.transform,
             decoration.ink(),
             decoration
         );
@@ -209,6 +215,7 @@ impl Scene {
             MonoSprite,
             mono_sprites,
             self.space_at(sprite.transform),
+            sprite.transform,
             sprite.ink(),
             sprite
         );
@@ -251,6 +258,7 @@ impl Scene {
             SubpixelSprite,
             subpixel_sprites,
             self.space_at(sprite.transform),
+            sprite.transform,
             sprite.ink(),
             sprite
         );
@@ -287,6 +295,7 @@ impl Scene {
             ColorSprite,
             color_sprites,
             self.space_at(sprite.transform),
+            sprite.transform,
             sprite.ink(),
             sprite
         );
@@ -328,15 +337,13 @@ impl Scene {
             Vector,
             vectors,
             item.transform,
+            item.transform.unwrap_or(SpatialId::VIEWPORT).index(),
             item.local_ink,
             item.clone()
         );
         self.note_unreplayable();
-        // The order and the cull read the ink measured in the subtree's own space, exactly as they
-        // do for every other primitive: `item.ink` has the item's transform applied, and testing it
-        // against neighbours recorded untransformed decides overlap in two different spaces at
-        // once. A held placement showed the failure — the drawing ordered against nothing, painted
-        // first, and covered by the surface drawn over it.
+        // The cull reads the ink measured in the subtree's own space, exactly as it does for every
+        // other primitive, and the order places that same rectangle on the device.
         let order = self.assign_order(
             item.local_ink,
             item.clip,
@@ -356,6 +363,7 @@ impl Scene {
             External,
             externals,
             Some(external.transform),
+            external.transform.index(),
             external.ink(),
             external
         );
@@ -378,6 +386,7 @@ impl Scene {
             Backdrop,
             backdrops,
             None,
+            SpatialId::VIEWPORT.index(),
             backdrop.bounds,
             backdrop.clone()
         );
@@ -409,7 +418,11 @@ impl Scene {
     /// by its bounds, and it happens precisely when the next thing drawn does not overlap the group
     /// it follows.
     pub fn push_group(&mut self, mut boundary: GroupBoundary) -> DrawOrder {
-        let order = self.order.insert_above_all(boundary.bounds);
+        let placed = self.on_device(
+            boundary.transform.unwrap_or(SpatialId::VIEWPORT).index(),
+            boundary.bounds,
+        );
+        let order = self.order.insert_above_all(placed);
         let is_end = !boundary.is_start;
         boundary.order = order;
         let kind = if boundary.is_start {
@@ -436,6 +449,9 @@ impl Scene {
     /// subtree's space, and the clip imposed on it from inside the same subtree is measured there
     /// too. Resolving only one of them onto the device would cull a field's letters against a
     /// rectangle the transform moved out from under them.
+    ///
+    /// The order is decided on the device: the clipped rectangle is put where the coordinate
+    /// system draws it, so content under two different transforms is compared where it lands.
     ///
     /// `space` is the slot of the coordinate system the primitive draws under, and the cull reads
     /// only the links of the chain that were measured in it. A link from anywhere else states its
@@ -467,9 +483,29 @@ impl Scene {
             // rediscovers an order that did not change.
             None => match self.replay_order.take() {
                 Some(order) => order,
-                None => self.order.insert(clipped),
+                None => {
+                    let placed = self.on_device(space, clipped);
+                    self.order.insert(placed)
+                }
             },
         })
+    }
+
+    /// `rect`, measured in the coordinate system occupying `slot`, where the device shows it.
+    ///
+    /// The rectangle itself for the viewport and for a slot nothing occupies.
+    pub(crate) fn on_device(
+        &self,
+        slot: u32,
+        rect: Rect<DevicePx, Device>,
+    ) -> Rect<DevicePx, Device> {
+        if slot == SpatialId::VIEWPORT.index() {
+            return rect;
+        }
+        match self.spatial.resolve_at(slot) {
+            Some(matrix) => zgui_geom::transformed_bounds(&matrix, rect),
+            None => rect,
+        }
     }
 
     /// The name occupying a primitive's slot, for a primitive that carries only the slot.

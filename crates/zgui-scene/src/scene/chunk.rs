@@ -160,9 +160,13 @@ pub struct ChunkPrims {
     pub span: DrawOrder,
     /// The rectangle the whole chunk puts ink in, in the coordinates it was recorded in.
     ///
-    /// `None` for a chunk with nothing in it. A replay asks the draw-order tree about this one
-    /// rectangle in place of asking about every primitive separately.
+    /// `None` for a chunk with nothing in it.
     pub ink: Option<Rect<DevicePx, Device>>,
+    /// The same ink split by the coordinate system each part was recorded in, by slot.
+    ///
+    /// A replay puts each part where its coordinate system now draws and asks the draw-order tree
+    /// about their union, in place of asking about every primitive separately.
+    pub ink_by_space: Vec<(u32, Rect<DevicePx, Device>)>,
     /// Clips the encoding minted for its own content, in mint order.
     ///
     /// A minted clip's rectangle is measured where the encoding drew, so a replay re-interns each
@@ -218,6 +222,7 @@ impl ChunkPrims {
     pub(crate) fn settle_orders(&mut self) {
         self.span = 0;
         self.ink = None;
+        self.ink_by_space.clear();
         if self.orders.len() != self.ops.len() {
             self.orders.clear();
             return;
@@ -237,6 +242,11 @@ impl ChunkPrims {
                 Some(union) => union.union(bounds),
                 None => bounds,
             });
+            let slot = slot_of(self, op);
+            match self.ink_by_space.iter_mut().find(|(held, _)| *held == slot) {
+                Some((_, union)) => *union = union.union(bounds),
+                None => self.ink_by_space.push((slot, bounds)),
+            }
         }
     }
 
@@ -315,6 +325,7 @@ impl ChunkPrims {
         self.orders.clear();
         self.span = 0;
         self.ink = None;
+        self.ink_by_space.clear();
         self.minted.clear();
     }
 }
@@ -338,6 +349,52 @@ fn order_of(prims: &crate::scene::primitives::Primitives, op: PaintOp) -> DrawOr
         PrimitiveKind::External => prims.externals.get(index).map_or(0, |prim| prim.order),
         PrimitiveKind::Backdrop => prims.backdrops.get(index).map_or(0, |prim| prim.order),
         PrimitiveKind::Vector | PrimitiveKind::GroupStart | PrimitiveKind::GroupEnd => 0,
+    }
+}
+
+/// The slot of the coordinate system one recorded operation draws under.
+fn slot_of(chunk: &ChunkPrims, op: PaintOp) -> u32 {
+    let index = op.index as usize;
+    let viewport = crate::spatial::SpatialId::VIEWPORT.index();
+    match op.kind {
+        PrimitiveKind::Quad => chunk
+            .quads
+            .get(index)
+            .map_or(viewport, |prim| prim.transform),
+        PrimitiveKind::Shaded => chunk
+            .shaded
+            .get(index)
+            .map_or(viewport, |prim| prim.transform),
+        PrimitiveKind::Shadow => chunk
+            .shadows
+            .get(index)
+            .map_or(viewport, |prim| prim.transform),
+        PrimitiveKind::Decoration => chunk
+            .decorations
+            .get(index)
+            .map_or(viewport, |prim| prim.transform),
+        PrimitiveKind::MonoSprite => chunk
+            .mono_sprites
+            .get(index)
+            .map_or(viewport, |prim| prim.transform),
+        PrimitiveKind::SubpixelSprite => chunk
+            .subpixel_sprites
+            .get(index)
+            .map_or(viewport, |prim| prim.transform),
+        PrimitiveKind::ColorSprite => chunk
+            .color_sprites
+            .get(index)
+            .map_or(viewport, |prim| prim.transform),
+        PrimitiveKind::External => chunk
+            .externals
+            .get(index)
+            .map_or(viewport, |prim| prim.transform.index()),
+        PrimitiveKind::Vector => chunk
+            .vectors
+            .get(index)
+            .and_then(|prim| prim.transform)
+            .map_or(viewport, crate::spatial::SpatialId::index),
+        PrimitiveKind::Backdrop | PrimitiveKind::GroupStart | PrimitiveKind::GroupEnd => viewport,
     }
 }
 
@@ -639,17 +696,23 @@ impl Scene {
         // frame, and the largest thing inside that walk was re-inserting every primitive of every
         // replayed row to rediscover an order none of them had changed.
         let base = chunk.carries_orders().then(|| {
-            let ink = chunk
-                .ink
+            let placed = chunk
+                .ink_by_space
+                .iter()
+                .map(|&(slot, ink)| {
+                    let moved = Rect::new(
+                        zgui_geom::Point::new(
+                            DevicePx(ink.origin.x.0 + by.width.0),
+                            DevicePx(ink.origin.y.0 + by.height.0),
+                        ),
+                        ink.size,
+                    );
+                    self.on_device(slot, moved)
+                })
+                .reduce(Rect::union)
                 .expect("a chunk that carries orders carries its ink");
-            let moved = Rect::new(
-                zgui_geom::Point::new(
-                    DevicePx(ink.origin.x.0 + by.width.0),
-                    DevicePx(ink.origin.y.0 + by.height.0),
-                ),
-                ink.size,
-            );
-            self.order.insert_block(moved, chunk.span.saturating_sub(1))
+            self.order
+                .insert_block(placed, chunk.span.saturating_sub(1))
         });
         for (position, op) in chunk.ops.iter().enumerate() {
             let index = op.index as usize;
