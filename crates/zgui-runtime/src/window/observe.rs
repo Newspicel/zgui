@@ -16,7 +16,8 @@
 //!   ordinary document — one emptiness test, not a walk.
 //! * **A value is delivered only when it changed.** A value delivered again is a signal written
 //!   again, which is an effect re-run and a frame; a document with a popover in it would otherwise
-//!   never settle.
+//!   never settle. Each watched quantity is compared on its own, and an unwatched one is never
+//!   measured.
 //! * **It is bounded at two passes.** A popover converges in one: the first lays the positioner
 //!   out, the second places it. A cycle is warned about once and truncated.
 
@@ -92,17 +93,27 @@ impl Window {
             }
             delivered = true;
             let node = zgui_view_dom::id::to_view(key);
-            if held.mask.contains(ObservedMask::BORDER_BOX) {
+            // Each value on its own, so a view watching one quantity is not handed it again because
+            // another one moved.
+            if held.mask.contains(ObservedMask::BORDER_BOX)
+                && measured.border_box != held.border_box
+            {
                 self.dom
                     .deliver(node, ObservedValue::BorderBox(measured.border_box));
             }
-            if held.mask.contains(ObservedMask::CONTENT_SIZE) {
+            if held.mask.contains(ObservedMask::CONTENT_SIZE)
+                && measured.content_size != held.content_size
+            {
                 self.dom
                     .deliver(node, ObservedValue::ContentSize(measured.content_size));
             }
+            let scrolled = measured.scroll_offset != held.scroll_offset
+                || measured.content_size != held.content_size
+                || measured.scrollport != held.scrollport;
             if held
                 .mask
                 .intersects(ObservedMask::SCROLL_OFFSET | ObservedMask::SCROLLPORT)
+                && scrolled
             {
                 self.dom.deliver(
                     node,
@@ -127,22 +138,48 @@ impl Window {
     }
 
     /// What one watched node measures to now.
+    ///
+    /// Only the quantities its mask watches are measured. The others keep the values `held` has,
+    /// so comparing the result with `held` compares exactly what is watched: a view watching a size
+    /// is not woken on every frame its box moves.
     fn measure(&self, key: zgui_dom::NodeKey, held: ObservationSlots) -> Option<ObservationSlots> {
         let layout = self.layout.borrow();
         let first = *layout.boxes_of(key).first()?;
         let resolved = layout.layout_of(first)?;
-        let region = zgui_layout::scroll_region::region_of(&layout, first);
-        Some(ObservationSlots {
-            mask: held.mask,
-            border_box: zgui_layout::fragment::transform::placed::window_box(
+        let mask = held.mask;
+        let scrolls = mask.intersects(ObservedMask::SCROLL_OFFSET | ObservedMask::SCROLLPORT);
+        let border_box = if mask.contains(ObservedMask::BORDER_BOX) {
+            zgui_layout::fragment::transform::placed::window_box(
                 &layout,
                 first,
                 &self.host.placements(),
             )
-            .unwrap_or_else(|| resolved.border_box()),
-            content_size: region.map_or(resolved.content_box().size, |region| region.content),
-            scroll_offset: self.scroll.borrow().offset_of(key),
-            scrollport: region.map_or(resolved.padding_box().size, |region| region.scrollport.size),
+            .unwrap_or_else(|| resolved.border_box())
+        } else {
+            held.border_box
+        };
+        let (content_size, scroll_offset, scrollport) =
+            if scrolls || mask.contains(ObservedMask::CONTENT_SIZE) {
+                let region = zgui_layout::scroll_region::region_of(&layout, first);
+                let content = region.map_or(resolved.content_box().size, |region| region.content);
+                if scrolls {
+                    (
+                        content,
+                        self.scroll.borrow().offset_of(key),
+                        region.map_or(resolved.padding_box().size, |region| region.scrollport.size),
+                    )
+                } else {
+                    (content, held.scroll_offset, held.scrollport)
+                }
+            } else {
+                (held.content_size, held.scroll_offset, held.scrollport)
+            };
+        Some(ObservationSlots {
+            mask,
+            border_box,
+            content_size,
+            scroll_offset,
+            scrollport,
         })
     }
 
