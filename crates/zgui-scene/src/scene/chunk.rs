@@ -481,6 +481,10 @@ impl Scene {
         );
         recycled.clear();
         self.capture_order.clear();
+        // A capture that was taken and never bound leaves its primitives transient, which is only
+        // true while its stamps are gone: the next binding would otherwise name them after a
+        // different chunk, and the renderer would draw them from that chunk's bytes.
+        self.capture_stamped.clear();
         self.capture = Some(recycled);
     }
 

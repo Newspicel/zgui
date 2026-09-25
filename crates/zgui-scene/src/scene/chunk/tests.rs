@@ -325,3 +325,26 @@ fn a_minted_clip_is_re_interned_where_the_chunk_replays() {
     assert_eq!(returned.len(), 1);
     assert_eq!(scene.clips.bounds(window), rect(0.0, 0.0, 30.0, 20.0));
 }
+
+#[test]
+fn a_capture_that_is_never_bound_leaves_its_primitives_transient() {
+    let (mut scene, fill) = scene();
+    // A fragment whose encoding was abandoned: captured, taken and never bound.
+    scene.begin_chunk_capture(ChunkPrims::default());
+    scene.push_quad(Quad::filled(rect(0.0, 0.0, 20.0, 20.0), fill));
+    let _ = scene.take_chunk_capture();
+    // The next fragment's encoding completes and is bound to its own revision.
+    scene.begin_chunk_capture(ChunkPrims::default());
+    scene.push_quad(Quad::filled(rect(40.0, 0.0, 20.0, 20.0), fill));
+    let _ = scene.take_chunk_capture();
+    scene.bind_capture(7);
+
+    let provenance = scene.provenance(crate::prim::PrimitiveKind::Quad);
+    assert!(
+        provenance[0].is_transient(),
+        "the abandoned fragment's quad was named after another chunk: {:?}",
+        provenance[0]
+    );
+    assert_eq!(provenance[1].revision, 7);
+    assert_eq!(provenance[1].index, 0);
+}
