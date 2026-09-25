@@ -293,7 +293,12 @@ impl NodeRef {
 
     // ---- observation: geometry as a reactive input ------------------------------------------
 
-    /// Observes this node's border box.
+    /// Observes this node's border box, where it is drawn in the window.
+    ///
+    /// The box is in window device pixels, with this node's own transform and every ancestor's
+    /// applied, so a scaled node reports its scaled extent. A transformed box is reported as the
+    /// smallest upright rectangle containing it. For the size of the content area before any
+    /// transform, observe [`NodeRef::observe_content_size`].
     ///
     /// The signal carries the value as of the last completed layout and is written during the
     /// frame that changes it, before anything is painted — so a view that repositions itself from
