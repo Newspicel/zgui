@@ -137,6 +137,9 @@ pub fn AlertDialogAction(
     /// How big it is.
     #[prop(default = ButtonSize::Md)]
     size: ButtonSize,
+    /// Where to record the button, for a caller that focuses it.
+    #[prop(optional)]
+    node_ref: Option<NodeRef>,
     /// Classes merged after the button's own.
     #[prop(into, optional)]
     class: Classes,
@@ -149,6 +152,7 @@ pub fn AlertDialogAction(
     let state = OverlayState::current();
     view! {
         Button(
+            node_ref = node_ref.unwrap_or_default(),
             variant = variant,
             size = size,
             on:click = move |_| {
