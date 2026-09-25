@@ -13,6 +13,7 @@
 use zgui_geom::{Device, DevicePx, Rect};
 
 use crate::id::DrawOrder;
+use crate::pass::cells::InkCells;
 use crate::pass::overlap::Intervening;
 
 /// Whether compositing these items as one draw at `composite` would cover a primitive that belongs
@@ -25,13 +26,15 @@ use crate::pass::overlap::Intervening;
 /// primitive and the item shows through it.
 pub(crate) fn traps(
     inks: &[Rect<DevicePx, Device>],
+    cells: &InkCells,
     orders: &[DrawOrder],
     intervening: &[Intervening],
     composite: DrawOrder,
 ) -> bool {
     intervening.iter().any(|primitive| {
         let earlier = primitive.accumulated.min(inks.len());
-        (0..earlier)
-            .any(|index| orders[index] < composite && primitive.bounds.intersects(inks[index]))
+        cells.meets(primitive.bounds, inks, |index| {
+            index < earlier && orders[index] < composite
+        })
     })
 }

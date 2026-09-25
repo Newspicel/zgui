@@ -74,7 +74,6 @@ impl Overlap {
         intervening: &[Intervening],
     ) -> bool {
         match self {
-            Self::Never => false,
             Self::BoundingBoxOrderBlind => accumulated
                 .iter()
                 .copied()
@@ -85,18 +84,35 @@ impl Overlap {
                         .iter()
                         .any(|primitive| primitive.bounds.intersects(whole))
                 }),
-            Self::BoundingBox => intervening.iter().any(|primitive| {
-                earlier(accumulated, primitive)
-                    .iter()
-                    .copied()
-                    .reduce(Rect::union)
-                    .is_some_and(|box_| primitive.bounds.intersects(box_))
-            }),
-            Self::PerItemInk => intervening.iter().any(|primitive| {
-                earlier(accumulated, primitive)
-                    .iter()
-                    .any(|ink| primitive.bounds.intersects(*ink))
-            }),
+            _ => intervening
+                .iter()
+                .any(|primitive| self.caught(accumulated, primitive)),
+        }
+    }
+
+    /// Whether this reading decides a split without looking at the candidate.
+    ///
+    /// Every reading but [`Overlap::BoundingBoxOrderBlind`] does. For those, one intervening
+    /// primitive that [`Overlap::caught`] reports splits the pass at the next item, whatever that
+    /// item is, so a caller can test each primitive once, when it arrives.
+    pub fn ignores_candidate(self) -> bool {
+        self != Self::BoundingBoxOrderBlind
+    }
+
+    /// Whether `primitive` alone makes [`Overlap::splits`] true for every candidate.
+    ///
+    /// Always false for [`Overlap::BoundingBoxOrderBlind`], whose answer depends on the candidate.
+    pub fn caught(self, accumulated: &[Rect<DevicePx, Device>], primitive: &Intervening) -> bool {
+        match self {
+            Self::Never | Self::BoundingBoxOrderBlind => false,
+            Self::BoundingBox => earlier(accumulated, primitive)
+                .iter()
+                .copied()
+                .reduce(Rect::union)
+                .is_some_and(|box_| primitive.bounds.intersects(box_)),
+            Self::PerItemInk => earlier(accumulated, primitive)
+                .iter()
+                .any(|ink| primitive.bounds.intersects(*ink)),
         }
     }
 }

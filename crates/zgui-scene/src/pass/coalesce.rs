@@ -5,6 +5,7 @@ use zgui_geom::{Device, DevicePx, Rect, Size};
 
 use crate::clip::ClipTable;
 use crate::id::{ClipId, DrawOrder};
+use crate::pass::cells::InkCells;
 use crate::pass::overlap::{Intervening, Overlap};
 use crate::pass::plan::{PlannedItem, PlannedPass, ScenePassPlan};
 use crate::pass::{region, trap};
@@ -52,8 +53,15 @@ struct Open {
     items: Vec<usize>,
     /// Their inks, in the same order.
     inks: Vec<Rect<DevicePx, Device>>,
+    /// The same inks, by the cells they cover.
+    cells: InkCells,
     /// Every non-vector primitive emitted since this pass's first item.
     intervening: Vec<Intervening>,
+    /// Whether an intervening primitive already splits the pass at its next item.
+    ///
+    /// Kept as each primitive arrives, for the readings that ignore the candidate, so admitting an
+    /// item costs nothing however many primitives came before it.
+    caught: bool,
     /// The highest draw order among the items admitted, which is where the composite belongs.
     ///
     /// **The highest and not the last.** Draw order is allocated from what a primitive overlaps, so
@@ -88,10 +96,18 @@ pub(crate) fn plan(input: Input<'_>, clips: &mut ClipTable, out: &mut ScenePassP
             }
             Event::Occluder(bounds) => {
                 if let Some(current) = open.as_mut() {
-                    current.intervening.push(Intervening {
+                    let primitive = Intervening {
                         bounds,
                         accumulated: current.inks.len(),
-                    });
+                    };
+                    current.caught = current.caught
+                        || match input.overlap {
+                            Overlap::PerItemInk => {
+                                current.cells.meets(bounds, &current.inks, |_| true)
+                            }
+                            reading => reading.caught(&current.inks, &primitive),
+                        };
+                    current.intervening.push(primitive);
                 }
             }
             Event::Vector(index) => {
@@ -108,6 +124,7 @@ pub(crate) fn plan(input: Input<'_>, clips: &mut ClipTable, out: &mut ScenePassP
                     Some(_) if inexpressible => true,
                     Some(current) if current.sealed => true,
                     // Rule 3.
+                    Some(current) if input.overlap.ignores_candidate() => current.caught,
                     Some(current) => {
                         input
                             .overlap
@@ -120,11 +137,14 @@ pub(crate) fn plan(input: Input<'_>, clips: &mut ClipTable, out: &mut ScenePassP
                 let current = open.get_or_insert_with(|| Open {
                     items: Vec::new(),
                     inks: Vec::new(),
+                    cells: InkCells::default(),
                     intervening: Vec::new(),
+                    caught: false,
                     composite_order: item.order,
                     sealed: false,
                 });
                 current.items.push(index);
+                current.cells.insert(current.inks.len(), item.ink);
                 current.inks.push(item.ink);
                 current.composite_order = current.composite_order.max(item.order);
                 current.sealed |= inexpressible;
@@ -149,7 +169,13 @@ fn close(open: Open, clips: &mut ClipTable, input: &Input<'_>, out: &mut ScenePa
         .iter()
         .map(|index| input.vectors[*index].order)
         .collect();
-    if trap::traps(&open.inks, &orders, &open.intervening, open.composite_order) {
+    if trap::traps(
+        &open.inks,
+        &open.cells,
+        &orders,
+        &open.intervening,
+        open.composite_order,
+    ) {
         for index in &open.items {
             record(core::slice::from_ref(index), clips, input, out);
         }
@@ -227,8 +253,8 @@ fn is_damaged(ink: Rect<DevicePx, Device>, damage: &DamageSet) -> bool {
 
 /// Whether no two of these rectangles overlap.
 ///
-/// Quadratic in the size of one pass, which is bounded by the same sweep rule 3 already performs,
-/// and is what decides whether the pass can be composited one item at a time.
+/// A pass of a few items compares every pair. A larger one tests each rectangle against the earlier
+/// ones near it, so a pass over a page of labels stays linear in its size.
 ///
 /// It is asked about **whole-pixel** rectangles, and that is the whole of why it is sound. A backend
 /// compositing a pass one item at a time draws one quad per item, and a quad covers whole pixels: two
@@ -237,9 +263,33 @@ fn is_damaged(ink: Rect<DevicePx, Device>, damage: &DamageSet) -> bool {
 /// and blended twice. Rounding first is what makes "no two overlap" mean "no texel is composited
 /// twice".
 fn pairwise_disjoint(inks: &[Rect<i32, Device>]) -> bool {
-    inks.iter().enumerate().all(|(index, left)| {
-        inks[index + 1..]
-            .iter()
-            .all(|right| !left.intersects(*right))
-    })
+    /// The most rectangles compared pair by pair.
+    const PAIRWISE: usize = 16;
+    if inks.len() <= PAIRWISE {
+        return inks.iter().enumerate().all(|(index, left)| {
+            inks[index + 1..]
+                .iter()
+                .all(|right| !left.intersects(*right))
+        });
+    }
+    let floats: Vec<Rect<DevicePx, Device>> = inks
+        .iter()
+        .map(|ink| {
+            Rect::new(
+                zgui_geom::Point::new(DevicePx(ink.origin.x as f32), DevicePx(ink.origin.y as f32)),
+                Size::new(
+                    DevicePx(ink.size.width as f32),
+                    DevicePx(ink.size.height as f32),
+                ),
+            )
+        })
+        .collect();
+    let mut cells = InkCells::default();
+    for (index, ink) in floats.iter().enumerate() {
+        if cells.meets(*ink, &floats, |_| true) {
+            return false;
+        }
+        cells.insert(index, *ink);
+    }
+    true
 }

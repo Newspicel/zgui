@@ -36,6 +36,7 @@
 //! draw order is allocated from what a primitive overlaps and so does not rise with emission order.
 //! Both facts are only decidable once the pass is complete, which is where rule 5 applies them.
 
+pub(crate) mod cells;
 pub mod coalesce;
 pub mod overlap;
 pub mod plan;

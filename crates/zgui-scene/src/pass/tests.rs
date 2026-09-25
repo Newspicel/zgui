@@ -6,7 +6,8 @@ use zgui_geom::{Point, Rect, Size};
 use crate::clip::ClipLink;
 use crate::id::ClipId;
 use crate::pass::fixture::{
-    across_a_group, avatars, badged_cards, dashboard, falling_order, rect, stacked_area, viewport,
+    across_a_group, avatars, badged_cards, dashboard, falling_order, label_field, rect,
+    stacked_area, viewport,
 };
 use crate::pass::overlap::Overlap;
 use crate::pass::warning::PassWarning;
@@ -427,4 +428,21 @@ fn a_pass_that_would_trap_a_primitive_under_its_composite_is_split_into_one_pass
             "every composite still sits above every item of its own pass"
         );
     }
+}
+
+/// A pass that grows past thousands of intervening primitives plans in time linear in each of them.
+///
+/// The bound is generous for an unoptimised build and far below what testing every intervening
+/// primitive again for every admitted item costs.
+#[test]
+fn a_long_pass_past_many_backgrounds_plans_quickly() {
+    let mut scene = label_field(8000);
+    let started = std::time::Instant::now();
+    let planned = passes(&mut scene, &DamageSet::full(), Overlap::PerItemInk);
+    let elapsed = started.elapsed();
+    assert_eq!(planned, 1);
+    assert!(
+        elapsed < std::time::Duration::from_secs(2),
+        "planning took {elapsed:?}"
+    );
 }

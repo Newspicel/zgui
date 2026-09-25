@@ -240,3 +240,26 @@ pub(crate) fn across_a_group() -> Scene {
     vector(&mut scene, 2, rect(500.0, 16.0, 24.0, 24.0), ClipId::ROOT);
     scene
 }
+
+/// A field of `count` labels, each a background with one drawing inside it.
+///
+/// Every background lies under its own drawing and meets no earlier one, so all the drawings share
+/// one pass, and every background is an intervening primitive of that pass. This is the shape of
+/// text drawn as outlines over label backgrounds, and the one that makes the cost of rule 3 show.
+pub(crate) fn label_field(count: u32) -> Scene {
+    let mut scene = Scene::new();
+    scene.begin_frame(viewport());
+    for index in 0..count {
+        let x = (index % 160) as f32 * 12.0;
+        let y = (index / 160) as f32 * 12.0;
+        let fill = grey(&mut scene, 0.9);
+        scene.push_quad(Quad::filled(rect(x, y, 10.0, 10.0), fill));
+        vector(
+            &mut scene,
+            index,
+            rect(x + 2.0, y + 2.0, 6.0, 6.0),
+            ClipId::ROOT,
+        );
+    }
+    scene
+}
