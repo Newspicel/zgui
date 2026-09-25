@@ -115,22 +115,25 @@ impl<T: Clone + PartialEq + 'static> Binding<T> {
     }
 
     /// What the caller says the value is, subscribing to it, or `None` when nothing is bound.
+    ///
+    /// A binding whose scope is gone answers `None` as well, so a control that outlives its
+    /// caller for the length of a teardown reads its own value rather than a disposed one.
     #[must_use]
     pub fn get(&self) -> Option<T> {
         match self {
             Self::Unbound => None,
-            Self::TwoWay(signal) => Some(signal.get()),
-            Self::Controlled { read, .. } => Some(read.get()),
+            Self::TwoWay(signal) => signal.try_get(),
+            Self::Controlled { read, .. } => read.try_get(),
         }
     }
 
-    /// The same, without subscribing.
+    /// The same, without subscribing. A binding whose scope is gone answers `None`.
     #[must_use]
     pub fn get_untracked(&self) -> Option<T> {
         match self {
             Self::Unbound => None,
-            Self::TwoWay(signal) => Some(signal.get_untracked()),
-            Self::Controlled { read, .. } => Some(read.get_untracked()),
+            Self::TwoWay(signal) => signal.try_get_untracked(),
+            Self::Controlled { read, .. } => read.try_get_untracked(),
         }
     }
 
