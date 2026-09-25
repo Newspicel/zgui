@@ -1,12 +1,14 @@
 //! Finishing a frame: planning the vector passes and sorting the remap lists into draw order.
 
 use zgui_bits::DamageSet;
+use zgui_geom::{Device, DevicePx, Rect};
 use zgui_profile::{Counter, counter};
 
 use crate::pass::coalesce::{self, Event, Input};
 use crate::pass::overlap::Overlap;
 use crate::prim::PrimitiveKind;
 use crate::scene::Scene;
+use crate::spatial::{Placements, SpatialId};
 
 impl Scene {
     /// Finishes the frame: plans the vector passes against `damage` and sorts the remap lists
@@ -134,6 +136,17 @@ impl Scene {
         // agrees with draw order wherever the question can matter: anything overlapping something
         // already pushed was given a strictly higher order than it, so for every overlapping pair
         // the two orders are the same order.
+        //
+        // Every rectangle is compared on the device. A primitive records its ink in the space it
+        // is drawn under, and a vector item's device ink was taken when it was emitted, which a
+        // replay carries past a later move of an enclosing space. So both are placed here, under
+        // the matrices this frame draws with.
+        let placements = Placements::of(&self.spatial);
+        for item in &mut self.primitives.vectors {
+            if let Some(ink) = placed(&placements, item.transform, item.local_ink) {
+                item.ink = ink;
+            }
+        }
         let events: Vec<Event> = self
             .ops
             .iter()
@@ -143,7 +156,10 @@ impl Scene {
                 // It is emphatically not an occluder: what a group covers is irrelevant to the
                 // question, and treating it as one let a pass run straight through the boundary.
                 PrimitiveKind::GroupStart | PrimitiveKind::GroupEnd => Event::Boundary,
-                _ => Event::Occluder(self.ink_of(*op)),
+                _ => {
+                    let ink = self.ink_of(*op);
+                    Event::Occluder(placed(&placements, self.space_of_op(*op), ink).unwrap_or(ink))
+                }
             })
             .collect();
 
@@ -167,6 +183,19 @@ impl Scene {
         counter::add(Counter::VelloPasses, self.pass_plan.passes.len() as u64);
         counter::add(Counter::VectorClipLayers, self.pass_plan.clip_layers as u64);
     }
+}
+
+/// `local` on the device, under the two-dimensional matrix `space` resolves to.
+///
+/// `None` for no space, a space nothing occupies and a matrix that leaves the plane. The caller then
+/// keeps the rectangle it has, which is what the item was emitted with.
+fn placed(
+    placements: &Placements,
+    space: Option<SpatialId>,
+    local: Rect<DevicePx, Device>,
+) -> Option<Rect<DevicePx, Device>> {
+    let affine = placements.get(space?)?.to_affine2()?;
+    Some(affine.transform_rect(local))
 }
 
 /// Fills `lane` with every index of `values`, sorted by `key`.
