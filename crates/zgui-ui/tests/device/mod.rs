@@ -115,6 +115,15 @@ impl Renderer for Recording {
     fn texture_sink(&mut self) -> &mut dyn zgui::atlas::TextureSink {
         self.renderer.texture_sink()
     }
+
+    // Forwarded, so a surface host finds the device behind the recording.
+    fn as_any_mut(&mut self) -> Option<&mut dyn core::any::Any> {
+        self.renderer.as_any_mut()
+    }
+
+    fn as_any(&self) -> Option<&dyn core::any::Any> {
+        self.renderer.as_any()
+    }
 }
 
 /// Builds the renderer the application under test draws through, writing every frame into `log`.
