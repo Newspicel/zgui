@@ -64,6 +64,9 @@ fn vs_quad(
 
 @fragment
 fn fs_quad(in: QuadVarying) -> @location(0) vec4<f32> {
+    // How long one device pixel is in the primitive's own space. Read before any branch, because
+    // a derivative is only defined where every fragment of the quad takes it.
+    let unit = max(max(fwidth(in.local).x, fwidth(in.local).y), 1e-6);
     let quad = quads[in.instance];
     // The clip is in device space, so it is evaluated at the real pixel; the shape is in the
     // primitive's own space, so it is evaluated at the point that maps to this pixel.
@@ -79,8 +82,12 @@ fn fs_quad(in: QuadVarying) -> @location(0) vec4<f32> {
     let half_size = size * 0.5;
     let center_to_point = point - (bounds_origin(quad.bounds) + half_size);
 
-    // Half a pixel is the largest distance between a pixel's centre and an edge that covers it.
-    let antialias_threshold = 0.5;
+    // Half a device pixel is the largest distance between a pixel's centre and an edge that covers
+    // it. The distances below are in the primitive's own space, so under a scale the band is
+    // measured in that space and every coverage is divided by the length of one device pixel:
+    // the edge is smoothed across one pixel at every zoom, and never across more than the pixels
+    // its ink reaches.
+    let antialias_threshold = 0.5 * unit;
 
     let corner_to_point = abs(center_to_point) - half_size;
     let corner_radii = pick_corner_radii(center_to_point, quad.radii);
@@ -97,7 +104,7 @@ fn fs_quad(in: QuadVarying) -> @location(0) vec4<f32> {
         // the background unweighted here would paint a full-intensity ring one pixel outside every
         // plain rectangle in the frame.
         let square_sdf = max(corner_to_point.x, corner_to_point.y);
-        return background * saturate(antialias_threshold - square_sdf) * clip;
+        return background * saturate((antialias_threshold - square_sdf) / unit) * clip;
     }
 
     // The widths of the two nearest sides.
@@ -164,10 +171,10 @@ fn fs_quad(in: QuadVarying) -> @location(0) vec4<f32> {
             );
         }
         let blended = over_premultiplied(background, border_color);
-        color = mix(background, blended, saturate(antialias_threshold - inner_sdf));
+        color = mix(background, blended, saturate((antialias_threshold - inner_sdf) / unit));
     }
 
-    return color * saturate(antialias_threshold - outer_sdf) * clip;
+    return color * saturate((antialias_threshold - outer_sdf) / unit) * clip;
 }
 
 // Premultiplied source-over.
