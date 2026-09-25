@@ -76,20 +76,33 @@ fn scene(badge: RwSignal<bool>) -> impl Fn() -> AnyView {
 
 #[test]
 fn every_frame_shows_one_surface_frame() {
+    run(1.0);
+}
+
+#[test]
+fn every_frame_shows_one_surface_frame_at_a_fractional_scale() {
+    run(1.2);
+}
+
+fn run(scale: f64) {
     crate::device::use_real_damage();
     let badge = RwSignal::new(false);
     let Some(mut stage) = Stage::open(SHEET, scene(badge)) else {
         eprintln!("skipped: no usable graphics device");
         return;
     };
+    if scale != 1.0 {
+        stage.rescale(scale);
+    }
+    let s = scale as f32;
     // Inside the content box, clear of the rounded corners and of the badge.
     let inside = Rect::new(
-        Point::new(DevicePx(30.0), DevicePx(110.0)),
-        Size::<DevicePx, Device>::new(DevicePx(180.0), DevicePx(100.0)),
+        Point::new(DevicePx(30.0 * s), DevicePx(110.0 * s)),
+        Size::<DevicePx, Device>::new(DevicePx(180.0 * s), DevicePx(100.0 * s)),
     );
     let top = Rect::new(
-        Point::new(DevicePx(100.0), DevicePx(30.0)),
-        Size::<DevicePx, Device>::new(DevicePx(110.0), DevicePx(40.0)),
+        Point::new(DevicePx(100.0 * s), DevicePx(30.0 * s)),
+        Size::<DevicePx, Device>::new(DevicePx(110.0 * s), DevicePx(40.0 * s)),
     );
     let mut seen = Vec::new();
     for step in 0..24 {

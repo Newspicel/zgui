@@ -177,6 +177,20 @@ impl Stage {
         self.harness.settle(64);
     }
 
+    /// Tells the window it now shows `scale` device pixels per CSS pixel, as a compositor does.
+    #[allow(dead_code, reason = "not every fixture changes the scale")]
+    pub fn rescale(&mut self, scale: f64) {
+        self.harness
+            .deliver_to_first(SurfaceEvent::ScaleFactorChanged {
+                scale_factor: scale,
+                size: Size::new(
+                    DevicePx((f64::from(WIDTH) * scale) as f32),
+                    DevicePx((f64::from(HEIGHT) * scale) as f32),
+                ),
+            });
+        self.harness.settle(64);
+    }
+
     /// Makes the window draw a complete picture, and waits for it.
     ///
     /// A window repaints the rectangles it damaged and nothing else, so the display list of an
