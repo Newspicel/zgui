@@ -868,10 +868,15 @@ impl Window {
                 self.refresh_interval().as_micros()
             )
         });
-        self.renderer.configure(RenderTarget::new(
+        let target = RenderTarget::new(
             Size::new(size.width.0 as i32, size.height.0 as i32),
             zgui_geom::Scale::new(self.scale),
-        ));
+        );
+        self.renderer.configure(if self.translucent {
+            target.translucent()
+        } else {
+            target
+        });
         self.damage = DamageSet::full();
     }
 
@@ -1439,6 +1444,9 @@ impl Window {
                 // those tiles are still on the screen.
                 resources: &content,
                 verify_replays: self.verify_replays,
+                // A translucent surface is composited over something else, and per-channel text
+                // coverage has no meaning there: the paint demotes it to ordinary coverage.
+                opaque_surface: !self.translucent,
                 anim: &*document,
                 // The bars are chrome rather than content, so nothing in the document cascades to
                 // them; what they follow is the scheme the window is presented in, which is the

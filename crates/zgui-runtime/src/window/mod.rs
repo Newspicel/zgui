@@ -380,6 +380,12 @@ pub struct Window {
     /// time the surface moves, and a preference that lived only inside it would be discarded by
     /// the next resize.
     scheme: zgui_style::ColorScheme,
+    /// Whether the surface is drawn translucent rather than opaque.
+    ///
+    /// Stated on every [`RenderTarget`](zgui_render::RenderTarget) this window configures and on
+    /// every frame it paints, because text with per-channel coverage has no meaning over a
+    /// destination that is not opaque.
+    translucent: bool,
     /// Whether the surface is entirely hidden.
     occluded: bool,
     /// Whether the surface is the one receiving the keyboard.
@@ -708,6 +714,7 @@ impl Window {
             viewport,
             scale,
             scheme: viewport.scheme,
+            translucent: false,
             occluded: false,
             surface_focused: true,
             extent: None,
@@ -1202,6 +1209,27 @@ impl Window {
 }
 
 impl Window {
+    /// Draws this window translucent or opaque from the next configuration on.
+    ///
+    /// A translucent window configures its renderer with
+    /// [`RenderTarget::translucent`](zgui_render::RenderTarget::translucent) and paints with
+    /// ordinary text coverage, so every pixel it composes is a premultiplied colour that can be
+    /// composited over something else.
+    pub(crate) fn set_translucent(&mut self, translucent: bool) {
+        if self.translucent != translucent {
+            self.translucent = translucent;
+            self.reconfigure = true;
+        }
+    }
+
+    /// Returns `true` where this window is drawn translucent.
+    ///
+    /// A window is translucent when the attributes it was opened with asked for a transparent
+    /// surface.
+    pub fn is_translucent(&self) -> bool {
+        self.translucent
+    }
+
     /// Hands this window the application's cascade pool.
     pub(crate) fn set_style_pool(&mut self, pool: Rc<zgui_style::engine::thread_pool::StylePool>) {
         self.style_pool = Some(pool);

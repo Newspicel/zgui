@@ -234,6 +234,10 @@ impl App {
     /// Whether the window may be partly transparent.
     ///
     /// What a window that draws its own rounded corners needs, so the desktop shows through them.
+    /// A transparent window is composed into a
+    /// [`RenderTarget::translucent`](zgui_render::RenderTarget::translucent) target: each pixel is
+    /// a premultiplied colour, a pixel nothing paints has zero alpha, and text is drawn with
+    /// ordinary coverage in place of per-channel coverage.
     pub fn with_transparent(mut self, transparent: bool) -> Self {
         self.inner.attributes_mut().transparent = transparent;
         self
@@ -320,6 +324,43 @@ impl App {
     pub fn with_exit_policy(mut self, exit: zgui_runtime::ExitPolicy) -> Self {
         self.inner = self.inner.with_exit_policy(exit);
         self
+    }
+
+    /// Sets how many workers the style cascade may use.
+    ///
+    /// The default is the machine's parallelism. `0` and `1` run the cascade on the frame thread,
+    /// with no pool. A host that shares the machine with other work, for example a game engine,
+    /// sets a small number here. The `ZGUI_STYLE_THREADS` environment variable overrides this
+    /// value. See [`zgui_runtime::App::with_style_threads`].
+    ///
+    /// ```
+    /// let app = zgui::app().with_style_threads(1).with_layout_threads(1);
+    /// assert_eq!(app.style_threads(), Some(1));
+    /// assert_eq!(app.layout_threads(), Some(1));
+    /// ```
+    pub fn with_style_threads(mut self, threads: usize) -> Self {
+        self.inner = self.inner.with_style_threads(threads);
+        self
+    }
+
+    /// Sets how many workers the layout engine may use.
+    ///
+    /// The default is the machine's parallelism. `0` and `1` run layout on the frame thread, with
+    /// no pool. The `ZGUI_LAYOUT_THREADS` environment variable overrides this value. See
+    /// [`zgui_runtime::App::with_layout_threads`].
+    pub fn with_layout_threads(mut self, threads: usize) -> Self {
+        self.inner = self.inner.with_layout_threads(threads);
+        self
+    }
+
+    /// Returns the style worker count set with [`App::with_style_threads`], if one was set.
+    pub fn style_threads(&self) -> Option<usize> {
+        self.inner.style_threads()
+    }
+
+    /// Returns the layout worker count set with [`App::with_layout_threads`], if one was set.
+    pub fn layout_threads(&self) -> Option<usize> {
+        self.inner.layout_threads()
     }
 
     /// Installs the application's own style sheet.

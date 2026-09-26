@@ -200,6 +200,16 @@ impl App {
         self
     }
 
+    /// Returns the style worker count set with [`App::with_style_threads`], if one was set.
+    pub fn style_threads(&self) -> Option<usize> {
+        self.style_threads
+    }
+
+    /// Returns the layout worker count set with [`App::with_layout_threads`], if one was set.
+    pub fn layout_threads(&self) -> Option<usize> {
+        self.layout_threads
+    }
+
     /// Runs `setup` in the scope above every window, before the first one opens.
     ///
     /// This is where state that belongs to the *application* rather than to a window goes. A
@@ -673,10 +683,19 @@ impl Runtime {
         }
         let surface = cx.create_surface(&self.live[index].spec.attributes)?;
         let size = surface.size();
+        let translucent = self.live[index].spec.attributes.transparent;
         let target = RenderTarget::new(
             zgui_geom::Size::new(size.width.0 as i32, size.height.0 as i32),
             zgui_geom::Scale::new(surface.scale_factor() as f32),
         );
+        // A window asked to be transparent is composed translucent from its first frame: the
+        // renderer picks a premultiplied presentation for it, and the paint gives its text ordinary
+        // coverage.
+        let target = if translucent {
+            target.translucent()
+        } else {
+            target
+        };
         let renderer = (self.renderer)(&surface, target)?;
         // Before the view is built, not after: a view that asks for anything while it is being
         // built asks through a waker that has to already know which surface it belongs to.
@@ -731,6 +750,7 @@ impl Runtime {
         // one travels and which way it points are both properties of the desktop, and a constant
         // above this line is a wheel that is wrong on every machine but the one it was written on.
         window.set_scroll_settings(cx.scroll_settings());
+        window.set_translucent(translucent);
         if let Some(pool) = &self.style_pool {
             window.set_style_pool(Rc::clone(pool));
         }
