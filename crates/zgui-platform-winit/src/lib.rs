@@ -51,7 +51,7 @@
 //!
 //! | Module | Contents |
 //! |---|---|
-//! | [`app`] | the event loop adapter, and [`run`] |
+//! | [`app`] | the event loop adapter, [`run`], and [`app::events::translate`] for a program that owns its loop |
 //! | [`park`] | the park state machine, and the obligation an install can hand back |
 //! | [`surface`] | one window: its handles and its chrome, and the loop's accessibility adapters |
 //! | [`input`] | the translation of keyboard, pointer, wheel, input method and drag |

@@ -8,7 +8,7 @@ use zgui_vocab::Modifiers;
 /// The command key is *meta* here whatever the desktop calls it — super, command, or the key with
 /// a flag on it. Collapsing the three into one name at this boundary is what lets a shortcut be
 /// written once instead of once per desktop.
-pub(crate) fn modifiers(state: ModifiersState) -> Modifiers {
+pub fn modifiers(state: ModifiersState) -> Modifiers {
     Modifiers::NONE
         .with(Modifiers::SHIFT, state.shift_key())
         .with(Modifiers::CONTROL, state.control_key())

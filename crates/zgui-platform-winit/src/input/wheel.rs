@@ -44,7 +44,7 @@ use zgui_vocab::{PointerId, PointerKind, ScrollDelta, ScrollPhase, WheelEvent};
 ///
 /// Pixels are converted out of physical pixels into the space a layout is written in, because that
 /// conversion needs only the surface's own scale and is exact.
-pub(crate) fn delta(delta: MouseScrollDelta, scale_factor: f64) -> ScrollDelta {
+pub fn delta(delta: MouseScrollDelta, scale_factor: f64) -> ScrollDelta {
     let scale = if scale_factor > 0.0 {
         scale_factor
     } else {
@@ -71,7 +71,7 @@ pub(crate) fn delta(delta: MouseScrollDelta, scale_factor: f64) -> ScrollDelta {
 /// gesture carries. Reading the phase alone therefore calls every notch part of a gesture, and a
 /// notch mistaken for a gesture is one nothing carries to its new place: the document arrives there
 /// in a single frame.
-pub(crate) const fn phase(delta: MouseScrollDelta, phase: TouchPhase) -> ScrollPhase {
+pub const fn phase(delta: MouseScrollDelta, phase: TouchPhase) -> ScrollPhase {
     match delta {
         MouseScrollDelta::LineDelta(..) => ScrollPhase::Discrete,
         MouseScrollDelta::PixelDelta(_) => match phase {
@@ -87,11 +87,7 @@ pub(crate) const fn phase(delta: MouseScrollDelta, phase: TouchPhase) -> ScrollP
 /// A wheel turn carries no position of its own on any desktop protocol in use, so the position is
 /// the one the pointer was last reported at. Without it a wheel turn could not be routed to
 /// whatever is under the pointer, which is what a wheel turn means.
-pub(crate) fn event(
-    delta: ScrollDelta,
-    phase: ScrollPhase,
-    position: Point<CssPx, Css>,
-) -> WheelEvent {
+pub fn event(delta: ScrollDelta, phase: ScrollPhase, position: Point<CssPx, Css>) -> WheelEvent {
     WheelEvent {
         delta,
         phase,

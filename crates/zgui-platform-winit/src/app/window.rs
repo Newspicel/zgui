@@ -10,20 +10,20 @@ use crate::app::drag::Drag;
 /// All three exist because the platform reports a *change* where the contract carries a *state*,
 /// and the difference has to be closed on the loop's own thread where the previous value is known.
 #[derive(Debug, Default)]
-pub(crate) struct WindowState {
+pub struct WindowState {
     /// Which modifiers are held.
     ///
     /// The platform reports this only when it changes, and a modifier can change while the window
     /// is not focused. A set recovered from key events alone is therefore wrong until the next
     /// press, which is how a shortcut stops working after switching windows.
-    pub(crate) modifiers: Modifiers,
+    pub modifiers: Modifiers,
     /// Where the pointer was last reported.
     ///
     /// A wheel turn and a file drop carry no position of their own on any desktop protocol in use,
     /// and both have to be routed to whatever is under the pointer. This is where that comes from.
-    pub(crate) pointer: Point<CssPx, Css>,
+    pub pointer: Point<CssPx, Css>,
     /// Content being dragged over the window from outside.
-    pub(crate) drag: Drag,
+    pub drag: Drag,
 }
 
 #[cfg(test)]

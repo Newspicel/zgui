@@ -17,7 +17,7 @@ mod code;
 mod modifiers;
 mod named;
 
-pub(crate) use crate::input::keyboard::modifiers::modifiers;
+pub use crate::input::keyboard::modifiers::modifiers;
 
 use winit::event::{ElementState, KeyEvent as WinitKeyEvent};
 use zgui_vocab::{KeyEvent, KeyLocation, KeyState};
@@ -39,7 +39,7 @@ use zgui_vocab::{KeyEvent, KeyLocation, KeyState};
 use winit::platform::modifier_supplement::KeyEventExtModifierSupplement;
 
 /// Whether a key went down or came up.
-pub(crate) const fn state(state: ElementState) -> KeyState {
+pub const fn state(state: ElementState) -> KeyState {
     match state {
         ElementState::Pressed => KeyState::Pressed,
         ElementState::Released => KeyState::Released,
@@ -47,7 +47,7 @@ pub(crate) const fn state(state: ElementState) -> KeyState {
 }
 
 /// Where a key sits when a keyboard has more than one of it.
-pub(crate) const fn location(location: winit::keyboard::KeyLocation) -> KeyLocation {
+pub const fn location(location: winit::keyboard::KeyLocation) -> KeyLocation {
     match location {
         winit::keyboard::KeyLocation::Left => KeyLocation::Left,
         winit::keyboard::KeyLocation::Right => KeyLocation::Right,
@@ -57,7 +57,7 @@ pub(crate) const fn location(location: winit::keyboard::KeyLocation) -> KeyLocat
 }
 
 /// A key press, with all three readings of it.
-pub(crate) fn event(event: &WinitKeyEvent) -> KeyEvent {
+pub fn event(event: &WinitKeyEvent) -> KeyEvent {
     KeyEvent {
         key: named::key(&event.logical_key, event.text.as_deref()),
         key_without_modifiers: unmodified(event),

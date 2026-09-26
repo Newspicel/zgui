@@ -31,9 +31,9 @@
 //!    the type the install hands back is what makes handing it over the only thing that can be
 //!    done with it.
 
-mod drag;
-mod events;
-mod window;
+pub mod drag;
+pub mod events;
+pub mod window;
 
 use std::collections::HashMap;
 
@@ -263,7 +263,13 @@ impl<A: AppHandler> ApplicationHandler<UserEvent> for WinitApp<A> {
         let destroyed = matches!(event, winit::event::WindowEvent::Destroyed);
         let timestamp = self.shared.clock().timestamp();
         let state = self.windows.entry(window_id).or_default();
-        let translated = events::translate(&surface, state, timestamp, event);
+        let translated = events::translate(
+            state,
+            surface.scale(),
+            || Surface::size(surface.as_ref()),
+            timestamp,
+            event,
+        );
 
         if let Some(translated) = translated {
             if let SurfaceEvent::ColorSchemeChanged(scheme) = translated {

@@ -10,7 +10,7 @@ use zgui_vocab::ImeEvent;
 /// The cursor inside a preedit is a byte range rather than a caret, because an input method
 /// selects a span of what is being composed as often as it places a point in it — and a selection
 /// collapsed to a point is expressible while a point widened to a selection is not.
-pub(crate) fn event(ime: Ime) -> ImeEvent {
+pub fn event(ime: Ime) -> ImeEvent {
     match ime {
         Ime::Enabled => ImeEvent::Enabled,
         Ime::Preedit(text, cursor) => ImeEvent::Preedit {
@@ -29,7 +29,7 @@ pub(crate) fn event(ime: Ime) -> ImeEvent {
 /// ordinary text. The two the platform does distinguish are the two that change its behaviour —
 /// a password field must not be remembered or suggested — and inventing a distinction it does not
 /// have would tell the input method something untrue.
-pub(crate) const fn purpose(purpose: TextInputPurpose) -> ImePurpose {
+pub const fn purpose(purpose: TextInputPurpose) -> ImePurpose {
     match purpose {
         TextInputPurpose::Password | TextInputPurpose::Pin => ImePurpose::Password,
         _ => ImePurpose::Normal,

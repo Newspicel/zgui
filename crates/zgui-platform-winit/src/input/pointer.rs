@@ -11,7 +11,7 @@ use zgui_vocab::{PointerAction, PointerButton, PointerEvent, PointerId, PointerK
 /// above is written in CSS pixels because that is what a stylesheet is written in. The surface's
 /// own scale is the bridge, and it is the surface's rather than the output's: a window can be
 /// presented at a scale its monitor is not.
-pub(crate) fn position(position: PhysicalPosition<f64>, scale_factor: f64) -> Point<CssPx, Css> {
+pub fn position(position: PhysicalPosition<f64>, scale_factor: f64) -> Point<CssPx, Css> {
     let scale = if scale_factor > 0.0 {
         scale_factor
     } else {
@@ -27,7 +27,7 @@ pub(crate) fn position(position: PhysicalPosition<f64>, scale_factor: f64) -> Po
 ///
 /// A button the platform reports only as a number keeps that number rather than collapsing into
 /// the primary one, because a mouse with eight buttons is a mouse someone bound all eight of.
-pub(crate) const fn button(button: MouseButton) -> PointerButton {
+pub const fn button(button: MouseButton) -> PointerButton {
     match button {
         MouseButton::Left => PointerButton::Primary,
         MouseButton::Right => PointerButton::Secondary,
@@ -39,7 +39,7 @@ pub(crate) const fn button(button: MouseButton) -> PointerButton {
 }
 
 /// A mouse at `position`, optionally carrying the button that was used.
-pub(crate) fn mouse(position: Point<CssPx, Css>, button: Option<PointerButton>) -> PointerEvent {
+pub fn mouse(position: Point<CssPx, Css>, button: Option<PointerButton>) -> PointerEvent {
     PointerEvent {
         id: PointerId::MOUSE,
         kind: PointerKind::Mouse,
@@ -56,7 +56,7 @@ pub(crate) fn mouse(position: Point<CssPx, Css>, button: Option<PointerButton>) 
 /// that two fingers down at once are two pointers rather than one that teleports. Pressure is
 /// carried where the device reports it and is absent where it does not, which is not the same as
 /// zero: a stylus resting on the glass reports a small pressure, and a finger reports none at all.
-pub(crate) fn touch(touch: &Touch, scale_factor: f64) -> PointerEvent {
+pub fn touch(touch: &Touch, scale_factor: f64) -> PointerEvent {
     PointerEvent {
         // The mouse owns identifier zero, so every contact is numbered above it.
         id: PointerId::new(touch.id.saturating_add(1)),
@@ -69,7 +69,7 @@ pub(crate) fn touch(touch: &Touch, scale_factor: f64) -> PointerEvent {
 }
 
 /// What a contact did.
-pub(crate) const fn action(phase: TouchPhase) -> PointerAction {
+pub const fn action(phase: TouchPhase) -> PointerAction {
     match phase {
         TouchPhase::Started => PointerAction::Pressed,
         TouchPhase::Moved => PointerAction::Moved,

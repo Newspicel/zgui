@@ -16,7 +16,7 @@ use zgui_platform::DragEvent;
 /// that delivered them is finished. That is the earliest moment at which the set is known to be
 /// complete, because the platform delivers a drag's files within a single turn.
 #[derive(Debug, Default)]
-pub(crate) struct Drag {
+pub struct Drag {
     /// Paths reported as hovering and not yet announced.
     hovering: Vec<PathBuf>,
     /// Paths reported as dropped and not yet announced.
@@ -27,22 +27,22 @@ pub(crate) struct Drag {
 
 impl Drag {
     /// Records a path being dragged over the window.
-    pub(crate) fn hovering(&mut self, path: PathBuf) {
+    pub fn hovering(&mut self, path: PathBuf) {
         self.hovering.push(path);
     }
 
     /// Records a path being dropped on the window.
-    pub(crate) fn dropped(&mut self, path: PathBuf) {
+    pub fn dropped(&mut self, path: PathBuf) {
         self.dropped.push(path);
     }
 
     /// Records the drag leaving without a drop.
-    pub(crate) const fn left(&mut self) {
+    pub const fn left(&mut self) {
         self.left = true;
     }
 
     /// Whether anything is waiting to be announced.
-    pub(crate) const fn is_pending(&self) -> bool {
+    pub const fn is_pending(&self) -> bool {
         self.left || !self.hovering.is_empty() || !self.dropped.is_empty()
     }
 
@@ -50,7 +50,7 @@ impl Drag {
     ///
     /// A drop is announced after an entry, in that order, because a target that is told about a
     /// drop it was never told to expect has had no chance to say whether it would accept one.
-    pub(crate) fn take(&mut self, position: Point<CssPx, Css>) -> Vec<DragEvent> {
+    pub fn take(&mut self, position: Point<CssPx, Css>) -> Vec<DragEvent> {
         let mut events = Vec::new();
         if !self.hovering.is_empty() {
             events.push(DragEvent::Entered {
