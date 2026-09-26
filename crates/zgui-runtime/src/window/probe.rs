@@ -8,6 +8,7 @@
 
 use zgui_dom::NodeKey;
 use zgui_geom::{Device, DevicePx, Point};
+use zgui_vocab::PointerId;
 
 use crate::window::Window;
 
@@ -51,5 +52,26 @@ impl Window {
             filter: &filter,
         };
         world.chain_at(point).path().to_vec()
+    }
+
+    /// Returns the element that holds `pointer`'s capture, if one does.
+    ///
+    /// A handler captures a pointer with
+    /// [`EventCx::capture_pointer`](zgui_view::EventCx::capture_pointer), and every later event of
+    /// that pointer goes to that element until the button is released. A host that shares the
+    /// pointer with other content, for example a game view under the interface, reads this to
+    /// keep a drag that started on the interface with the interface.
+    ///
+    /// The answer is the router's state after the last dispatch: a press or release still in the
+    /// queue has not changed it yet.
+    pub fn pointer_capture(&self, pointer: PointerId) -> Option<NodeKey> {
+        self.router.capture().of(pointer)
+    }
+
+    /// Returns `true` where an element holds the capture of any pointer.
+    ///
+    /// See [`Window::pointer_capture`].
+    pub fn has_pointer_capture(&self) -> bool {
+        !self.router.capture().is_empty()
     }
 }
