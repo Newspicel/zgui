@@ -85,6 +85,10 @@ struct Shared {
     extensions: Vec<&'static CStr>,
     /// The device most windows draw on, opened by the first surface and replaced after a loss.
     primary: RefCell<Option<Rc<DeviceState>>>,
+    /// Whether the primary device belongs to a host, which then is the only thing that opens one.
+    ///
+    /// See [`SharedGraphics::with_gpu`].
+    adopted: bool,
     /// Devices opened for surfaces the primary adapter cannot present to.
     ///
     /// Weak, so that a cache never keeps a device alive: when the last window on a fallback adapter
@@ -154,9 +158,72 @@ impl SharedGraphics {
             }),
             backends,
             extensions,
+            adopted: false,
             primary: RefCell::new(None),
             fallbacks: RefCell::new(Vec::new()),
         }))
+    }
+
+    /// Graphics on a device a host opened, and on no other device.
+    ///
+    /// `gpu` is usually one from [`Gpu::from_existing`]. It becomes the primary device at once, so
+    /// [`SharedGraphics::gpu`] and [`SharedGraphics::open_gpu`] return it and
+    /// [`SharedGraphics::renderer_supplied`] can be called immediately. The instance is the one the
+    /// device came from, and the backends are the backend of its adapter.
+    ///
+    /// These graphics never open a device. Where every entry point would otherwise open one — the
+    /// first surface on a lost device, a surface the adapter cannot present to, the replacement
+    /// after a loss — they refuse with a [`GpuUnavailable`] that says so. After the host has
+    /// recovered from a loss, it gives the new device with [`SharedGraphics::adopt`].
+    ///
+    /// ```no_run
+    /// # use zgui_render_wgpu::wgpu;
+    /// # fn host() -> (wgpu::Instance, wgpu::Adapter, wgpu::Device, wgpu::Queue) { unimplemented!() }
+    /// use zgui_render_wgpu::{Gpu, SharedGraphics};
+    ///
+    /// let (instance, adapter, device, queue) = host();
+    /// let graphics = SharedGraphics::with_gpu(Gpu::from_existing(instance, adapter, device, queue));
+    /// let gpu = graphics.open_gpu().expect("the adopted device is the primary one");
+    /// assert!(gpu.is_adopted());
+    /// ```
+    pub fn with_gpu(gpu: Arc<Gpu>) -> Self {
+        let backends = wgpu::Backends::from(gpu.adapter().get_info().backend);
+        Self(Rc::new(Shared {
+            instance: gpu.instance().clone(),
+            backends,
+            extensions: gpu.vulkan_extensions().to_vec(),
+            adopted: true,
+            primary: RefCell::new(Some(DeviceState::new(gpu))),
+            fallbacks: RefCell::new(Vec::new()),
+        }))
+    }
+
+    /// Makes `gpu` the primary device, in place of the current one.
+    ///
+    /// For a host that owns the device: after it has recovered from a loss, it adopts the new
+    /// device here. A renderer on the old device changes to the new one the next time it recovers
+    /// from the loss. A renderer that presents into supplied textures cannot recover, because its
+    /// textures belong to the old device; its owner makes a new renderer with textures on the new
+    /// device.
+    ///
+    /// Adopting the device that is already the primary one changes nothing: the pipelines built
+    /// on it are kept.
+    pub fn adopt(&self, gpu: Arc<Gpu>) {
+        let mut primary = self.0.primary.borrow_mut();
+        if primary
+            .as_ref()
+            .is_some_and(|state| Arc::ptr_eq(&state.gpu, &gpu))
+        {
+            return;
+        }
+        *primary = Some(DeviceState::new(gpu));
+    }
+
+    /// Returns `true` where these graphics draw only on a device a host gave them.
+    ///
+    /// See [`SharedGraphics::with_gpu`].
+    pub fn is_adopted(&self) -> bool {
+        self.0.adopted
     }
 
     /// The instance, so that whatever owns a native window can create a surface from it.
@@ -429,6 +496,15 @@ impl SharedGraphics {
         &self,
         present: impl FnMut(&Arc<Gpu>) -> Result<Presentation, String>,
     ) -> Result<(Arc<Gpu>, Presentation), GpuUnavailable> {
+        if self.0.adopted {
+            // The host owns the device. A device opened here would be one the host's resources
+            // cannot be used with, and one the host does not know it has to keep alive.
+            return Err(GpuUnavailable::new().rejected(
+                "the adopted device",
+                "these graphics draw only on the device the host gave them, and that device is \
+                 lost or cannot present here: the host gives a new one with SharedGraphics::adopt",
+            ));
+        }
         open_device(
             &self.0.instance,
             self.0.backends,

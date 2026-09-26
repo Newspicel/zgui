@@ -1,5 +1,6 @@
 //! Noticing that the device died.
 
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 /// The flag a device-lost callback sets, and the counter of validation failures beside it.
@@ -31,6 +32,18 @@ impl DeviceLoss {
     pub fn report(&self, reason: wgpu::DeviceLostReason, message: &str) {
         self.lost.store(true, Ordering::Release);
         tracing::error!(?reason, message, "the graphics device was lost");
+    }
+
+    /// Returns a closure that records a loss here, for a device-lost callback that a host owns.
+    ///
+    /// wgpu keeps one device-lost callback per device. A host that set its own callback on a
+    /// device adopted with [`Gpu::from_existing`](crate::Gpu::from_existing) calls this closure
+    /// from inside that callback, so the host and every renderer on the device both see the loss.
+    pub fn observer(
+        self: &Arc<Self>,
+    ) -> impl Fn(wgpu::DeviceLostReason, &str) + Send + Sync + 'static {
+        let loss = Arc::clone(self);
+        move |reason, message| loss.report(reason, message)
     }
 
     /// Whether the device has been reported lost.
@@ -97,6 +110,15 @@ mod tests {
         loss.note_acquisition_succeeded();
         assert_eq!(loss.consecutive_validation_failures(), 0);
         assert!(!loss.note_validation_failure());
+    }
+
+    #[test]
+    fn an_observer_reports_into_the_loss_it_came_from() {
+        let loss = std::sync::Arc::new(DeviceLoss::new());
+        let observe = loss.observer();
+        assert!(!loss.is_lost());
+        observe(wgpu::DeviceLostReason::Unknown, "host callback");
+        assert!(loss.is_lost());
     }
 
     #[test]

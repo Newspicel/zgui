@@ -41,6 +41,8 @@ pub struct Gpu {
     extensions: Vec<&'static CStr>,
     /// Whether the device has been reported lost.
     loss: Arc<DeviceLoss>,
+    /// Whether another program part opened the device and gave it to this one.
+    adopted: bool,
 }
 
 impl Gpu {
@@ -129,7 +131,70 @@ impl Gpu {
             capabilities,
             extensions,
             loss,
+            adopted: false,
         })
+    }
+
+    /// Adopts a device that a host opened, with its queue, adapter and instance.
+    ///
+    /// Use this where a host, for example a game engine, owns the one graphics device of the
+    /// process and the interface has to draw on that device. The host keeps its own features and
+    /// limits. The capabilities are read off `device` and `adapter` the same way
+    /// [`Gpu::open`] reads them, so a device without dual-source blending draws text with ordinary
+    /// coverage, and so on.
+    ///
+    /// # Device loss
+    ///
+    /// wgpu keeps one device-lost callback per device, and setting a callback replaces the
+    /// previous one. The host already has its callback on `device`, so this function sets no
+    /// callback. The host tells this [`Gpu`] about a loss: it calls
+    /// [`DeviceLoss::report`] on [`Gpu::loss`], or it installs the closure that
+    /// [`DeviceLoss::observer`] returns inside its own callback. Until the host reports it, a loss
+    /// is invisible to every renderer on this device.
+    ///
+    /// # Recovery
+    ///
+    /// An adopted device is never replaced by this crate: a
+    /// [`SharedGraphics`](crate::SharedGraphics) made with
+    /// [`SharedGraphics::with_gpu`](crate::SharedGraphics::with_gpu) opens no device of its own.
+    /// After the host recovers, it adopts the new device with
+    /// [`SharedGraphics::adopt`](crate::SharedGraphics::adopt).
+    ///
+    /// ```no_run
+    /// # use zgui_render_wgpu::wgpu;
+    /// # fn host() -> (wgpu::Instance, wgpu::Adapter, wgpu::Device, wgpu::Queue) { unimplemented!() }
+    /// use zgui_render_wgpu::{Gpu, SharedGraphics};
+    ///
+    /// let (instance, adapter, device, queue) = host();
+    /// let gpu = Gpu::from_existing(instance, adapter, device, queue);
+    /// let graphics = SharedGraphics::with_gpu(gpu);
+    /// assert!(graphics.gpu().is_some());
+    /// ```
+    pub fn from_existing(
+        instance: wgpu::Instance,
+        adapter: wgpu::Adapter,
+        device: wgpu::Device,
+        queue: wgpu::Queue,
+    ) -> Arc<Self> {
+        let capabilities = probe(&adapter, &device);
+        Arc::new(Self {
+            instance,
+            adapter,
+            device,
+            queue,
+            capabilities,
+            extensions: Vec::new(),
+            loss: Arc::new(DeviceLoss::new()),
+            adopted: true,
+        })
+    }
+
+    /// Returns `true` where the device came from [`Gpu::from_existing`].
+    ///
+    /// An adopted device belongs to the host. This crate does not replace it after a loss and does
+    /// not watch it for one: see [`Gpu::from_existing`].
+    pub fn is_adopted(&self) -> bool {
+        self.adopted
     }
 
     /// The instance surfaces are created from.
