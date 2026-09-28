@@ -298,6 +298,17 @@ impl<'a> Dispatcher<'a> {
     /// Delivers one event and nothing else, which is what everything above is built out of.
     fn dispatch(&self, target: NodeId, kind: EventKind, payload: Payload) -> Delivered {
         let path = self.path_to(target);
+        // An element that has left the tree reaches nothing, as in a window: its listeners
+        // belong to the view that took it away.
+        if path.first() != Some(&self.root) {
+            return Delivered {
+                target: Some(target),
+                path: Vec::new(),
+                ran: Vec::new(),
+                default: DefaultAction::Allowed,
+                commands: Vec::new(),
+            };
+        }
         let steps = self.resolve(&path, kind);
 
         let control = EventControl::new();

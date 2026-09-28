@@ -281,3 +281,34 @@ fn an_order_names_registrations_by_identity_so_a_swap_mid_dispatch_runs_nothing_
          run in its place"
     );
 }
+
+#[test]
+fn an_element_that_left_the_tree_reaches_nothing() {
+    let window = Window::open();
+    let button = window.dom.create_element(ElementName::new("control"));
+    window.dom.insert(window.root, button, None);
+    let clicks = Rc::new(Cell::new(0));
+    let count = Rc::clone(&clicks);
+    window.dom.add_listener(
+        button,
+        EventKind::Click,
+        ListenerOptions::DEFAULT,
+        Rc::new(move |_| count.set(count.get() + 1)),
+    );
+    window.dom.detach(button);
+
+    let delivered = window.dispatcher().send_to(
+        button,
+        EventKind::Click,
+        zgui_vocab::Payload::Pointer(zgui_vocab::PointerEvent::mouse(zgui_geom::Point::new(
+            zgui_geom::CssPx(0.0),
+            zgui_geom::CssPx(0.0),
+        ))),
+    );
+    assert!(delivered.ran.is_empty());
+    assert_eq!(
+        clicks.get(),
+        0,
+        "a click reached an element outside the tree"
+    );
+}
