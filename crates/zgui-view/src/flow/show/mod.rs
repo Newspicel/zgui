@@ -253,4 +253,36 @@ mod tests {
         assert_eq!(f.text(), "shut");
         f.window.unmount();
     }
+
+    #[test]
+    fn a_write_that_does_not_change_the_answer_keeps_what_the_branch_made() {
+        // What a component makes as it is built — a signal, a stored value — belongs to the scope
+        // of the branch, and the branch stays while the answer does, so all of it stays too.
+        let f = Fixture::new();
+        let source = f.window.with(|| RwSignal::new(2));
+        let made: Rc<Cell<Option<RwSignal<u8>>>> = Rc::new(Cell::new(None));
+        let slot = Rc::clone(&made);
+
+        let mut state = f.window.with(|| {
+            Show::new(
+                move || source.get() % 2 == 0,
+                move || {
+                    slot.set(Some(RwSignal::new(7)));
+                    AnyView::new("even")
+                },
+            )
+            .build(&mut f.cx())
+        });
+        state.mount(&f.dom, f.root, None);
+        let signal = made.get().expect("the branch made a signal");
+
+        source.set(4);
+        flush();
+        assert_eq!(
+            signal.try_get_untracked(),
+            Some(7),
+            "the branch still shows, and what it made was disposed of"
+        );
+        f.window.unmount();
+    }
 }
