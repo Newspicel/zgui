@@ -574,9 +574,10 @@ impl Pass<'_, '_> {
     /// moves.
     fn highlight_signature(&self, fragment: &Fragment) -> u64 {
         match fragment.kind {
-            zgui_layout::FragmentKind::Line { paragraph, line } => {
-                self.input.highlights.fingerprint(paragraph, line)
-            }
+            zgui_layout::FragmentKind::Line { paragraph, line } => self
+                .input
+                .highlights
+                .fingerprint(fragment.box_, paragraph, line),
             _ => 0,
         }
     }

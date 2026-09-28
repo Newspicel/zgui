@@ -192,7 +192,14 @@ fn content_tracked(
             // The selection under the glyphs, the caret over them. Neither order is a preference:
             // a band drawn over opaque text hides the text it is meant to mark, and a caret drawn
             // under it disappears inside whichever letter it is sitting on.
-            let mut pushed = marks(scene, emission, paragraph, line, HighlightLayer::Behind);
+            let mut pushed = marks(
+                scene,
+                emission,
+                fragment.box_,
+                paragraph,
+                line,
+                HighlightLayer::Behind,
+            );
             pushed += text::emit(
                 scene,
                 emission.glyphs,
@@ -205,7 +212,15 @@ fn content_tracked(
                 },
                 emission.text_placement,
             );
-            pushed + marks(scene, emission, paragraph, line, HighlightLayer::InFront)
+            pushed
+                + marks(
+                    scene,
+                    emission,
+                    fragment.box_,
+                    paragraph,
+                    line,
+                    HighlightLayer::InFront,
+                )
         }
         // A run is a style-uniform span *within* a line, and a fragment tree that splits lines that
         // far is what a rich-text editor needs rather than what a document produces. Until something
@@ -320,6 +335,7 @@ fn content_tracked(
 fn marks(
     scene: &mut Scene,
     emission: &Emission<'_>,
+    owner: zgui_dom::side::BoxKey,
     paragraph: zgui_layout::fragment::ParagraphId,
     line: u16,
     layer: HighlightLayer,
@@ -327,6 +343,7 @@ fn marks(
     highlight::emit(
         scene,
         emission.highlights,
+        owner,
         paragraph,
         line,
         layer,

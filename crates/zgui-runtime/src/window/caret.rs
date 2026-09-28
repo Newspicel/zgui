@@ -114,7 +114,7 @@ impl Window {
                 continue;
             };
             out.extend(
-                plan.rects_of(paragraph, line, fragment.border_box.origin)
+                plan.rects_of(fragment.box_, paragraph, line, fragment.border_box.origin)
                     .into_iter()
                     .map(|rect| {
                         zgui_layout::fragment::transform::placed::onto_device(
@@ -163,7 +163,7 @@ impl Window {
                 continue;
             };
             if let Some(rect) = plan
-                .rects_of(paragraph, line, fragment.border_box.origin)
+                .rects_of(fragment.box_, paragraph, line, fragment.border_box.origin)
                 .last()
             {
                 return Some(zgui_layout::fragment::transform::placed::onto_device(

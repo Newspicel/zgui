@@ -49,7 +49,7 @@ pub fn extent(
         scale,
     };
     let mut held: Option<Rect<DevicePx, Device>> = None;
-    highlights.visit_line(paragraph, line, request, &mut |highlight| {
+    highlights.visit_line(fragment.box_, paragraph, line, request, &mut |highlight| {
         held = Some(match held {
             Some(union) => union.union(highlight.bounds),
             None => highlight.bounds,
@@ -69,6 +69,7 @@ pub fn extent(
 
 #[cfg(test)]
 mod tests {
+    use zgui_dom::side::BoxKey;
     use zgui_geom::{DevicePx, Point, Rect, Size};
     use zgui_layout::fragment::ParagraphId;
     use zgui_layout::{Fragment, FragmentKind};
@@ -110,12 +111,13 @@ mod tests {
     struct OneCaret;
 
     impl HighlightSource for OneCaret {
-        fn fingerprint(&self, _paragraph: ParagraphId, _line: u16) -> u64 {
+        fn fingerprint(&self, _owner: BoxKey, _paragraph: ParagraphId, _line: u16) -> u64 {
             1
         }
 
         fn visit_line(
             &self,
+            _owner: BoxKey,
             _paragraph: ParagraphId,
             _line: u16,
             request: HighlightRequest,

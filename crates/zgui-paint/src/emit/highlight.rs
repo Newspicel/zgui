@@ -18,6 +18,7 @@
 //! happened to be in when the line was last encoded — for ever.
 
 use zgui_color::Color;
+use zgui_dom::side::BoxKey;
 use zgui_geom::{Device, DevicePx, Point, Rect};
 use zgui_layout::fragment::ParagraphId;
 use zgui_scene::{ClipId, Quad, Scene, SpatialId};
@@ -67,7 +68,10 @@ pub trait HighlightSource {
     /// whenever the painting would: a caret that blinked, a selection that grew, a caret that moved
     /// to another offset on the same line. A source that answers with a constant makes every caret
     /// in the document permanent at whatever phase it was first drawn in.
-    fn fingerprint(&self, paragraph: ParagraphId, line: u16) -> u64;
+    ///
+    /// `owner` is the box the line is a piece of. Two boxes that hold the same text share one
+    /// shaped paragraph, so the paragraph alone does not say which of them is being edited.
+    fn fingerprint(&self, owner: BoxKey, paragraph: ParagraphId, line: u16) -> u64;
 
     /// Visits every rectangle to be drawn with one line.
     ///
@@ -75,6 +79,7 @@ pub trait HighlightSource {
     /// document nobody is typing into.
     fn visit_line(
         &self,
+        owner: BoxKey,
         paragraph: ParagraphId,
         line: u16,
         request: HighlightRequest,
@@ -90,12 +95,13 @@ pub trait HighlightSource {
 pub struct NoHighlights;
 
 impl HighlightSource for NoHighlights {
-    fn fingerprint(&self, _paragraph: ParagraphId, _line: u16) -> u64 {
+    fn fingerprint(&self, _owner: BoxKey, _paragraph: ParagraphId, _line: u16) -> u64 {
         0
     }
 
     fn visit_line(
         &self,
+        _owner: BoxKey,
         _paragraph: ParagraphId,
         _line: u16,
         _request: HighlightRequest,
@@ -113,6 +119,7 @@ impl HighlightSource for NoHighlights {
 pub fn emit(
     scene: &mut Scene,
     highlights: &dyn HighlightSource,
+    owner: BoxKey,
     paragraph: ParagraphId,
     line: u16,
     layer: HighlightLayer,
@@ -122,7 +129,7 @@ pub fn emit(
     alpha: f32,
 ) -> usize {
     let mut pushed = 0;
-    highlights.visit_line(paragraph, line, request, &mut |highlight| {
+    highlights.visit_line(owner, paragraph, line, request, &mut |highlight| {
         if highlight.layer != layer {
             return;
         }

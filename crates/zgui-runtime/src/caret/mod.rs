@@ -81,6 +81,9 @@ impl Mark {
 /// fragment by the emit walk.
 #[derive(Debug, Default)]
 pub struct Plan {
+    /// The box whose lines carry the marks, and nothing when there are none. Two boxes that hold
+    /// the same text share one paragraph, so the paragraph alone names both.
+    owner: Option<zgui_dom::side::BoxKey>,
     /// The paragraph the marks belong to, and nothing when there are none.
     paragraph: Option<ParagraphId>,
     /// The rectangles, in the order they were computed.
@@ -126,6 +129,7 @@ impl Plan {
     /// Recomputes the fingerprint from what the plan holds.
     fn seal(mut self) -> Self {
         let mut hasher = rustc_hash::FxHasher::default();
+        self.owner.hash(&mut hasher);
         self.paragraph.map(ParagraphId::index).hash(&mut hasher);
         for mark in &self.marks {
             mark.hash_into(&mut hasher);
@@ -145,12 +149,14 @@ impl Plan {
     /// itself rather than the display list.
     pub fn rects_of(
         &self,
+        owner: zgui_dom::side::BoxKey,
         paragraph: ParagraphId,
         line: u16,
         origin: Point<DevicePx, Device>,
     ) -> Vec<Rect<DevicePx, Device>> {
         let mut out = Vec::new();
         self.visit_line(
+            owner,
             paragraph,
             line,
             HighlightRequest { origin, scale: 1.0 },
@@ -161,8 +167,9 @@ impl Plan {
 }
 
 impl HighlightSource for Plan {
-    fn fingerprint(&self, paragraph: ParagraphId, line: u16) -> u64 {
-        if self.paragraph != Some(paragraph) {
+    fn fingerprint(&self, owner: zgui_dom::side::BoxKey, paragraph: ParagraphId, line: u16) -> u64 {
+        // Two boxes that hold the same text share one paragraph; the owner tells them apart.
+        if self.owner != Some(owner) || self.paragraph != Some(paragraph) {
             return 0;
         }
         // Per line, so that a paragraph whose caret is on its third line does not force its first
@@ -175,12 +182,13 @@ impl HighlightSource for Plan {
 
     fn visit_line(
         &self,
+        owner: zgui_dom::side::BoxKey,
         paragraph: ParagraphId,
         line: u16,
         request: HighlightRequest,
         visit: &mut dyn FnMut(Highlight),
     ) {
-        if self.paragraph != Some(paragraph) {
+        if self.owner != Some(owner) || self.paragraph != Some(paragraph) {
             return;
         }
         for mark in self.marks.iter().filter(|mark| mark.line == line) {
@@ -312,6 +320,7 @@ pub fn plan_for(
         });
     }
     Plan {
+        owner: (!marks.is_empty()).then_some(located.owner),
         paragraph: (!marks.is_empty()).then_some(located.paragraph),
         marks,
         fingerprint: 0,

@@ -46,6 +46,8 @@ pub fn text_box(layout: &LayoutStore, node: NodeKey) -> Option<zgui_dom::side::B
 /// Built per frame and never held: it is a reading of the current layout, and a reading kept across
 /// a frame that re-broke the paragraph would place carets on lines that are no longer there.
 pub struct Located {
+    /// The box that lays the element's text out, which its line fragments are pieces of.
+    pub owner: zgui_dom::side::BoxKey,
     /// The paragraph the element's lines belong to.
     pub paragraph: ParagraphId,
     /// The top-left corner of the inline formatting context's content box, in device pixels.
@@ -122,6 +124,7 @@ impl Located {
             })
             .collect();
         Some(Self {
+            owner: box_,
             paragraph: resolution.paragraph,
             origin,
             transform,

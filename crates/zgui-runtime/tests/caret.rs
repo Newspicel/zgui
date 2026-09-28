@@ -853,3 +853,67 @@ fn a_field_emptied_of_everything_still_shows_its_caret() {
         script.carets()
     );
 }
+
+#[test]
+fn a_caret_stands_in_the_focused_field_alone_when_another_shows_the_same_text() {
+    // Two empty fields with the same placeholder share one shaped paragraph. The caret belongs to
+    // the box of the field that holds focus, and a caret keyed by the paragraph alone stood in
+    // both.
+    const HINTED: &str = "root { display: block; width: 400px; height: 300px; padding: 12px 20px }
+                          editor { display: block; width: 200px; height: 40px; color: rgb(0, 102, 204) }
+                          editor { position: relative }
+                          editor:empty::before {
+                              content: \"of the image\";
+                              position: absolute;
+                              top: 0;
+                              bottom: 0;
+                              left: 12px;
+                              right: 12px;
+                              display: flex;
+                              flex-direction: row;
+                              align-items: center;
+                          }
+                          editor:hover { background-color: rgb(250, 250, 250) }";
+    let first = NodeRef::new();
+    let harness = support::app_with_text(HINTED, move |cx: &mut BuildCx<'_>| {
+        Box::new(
+            zgui_elements::column()
+                .class("root")
+                .child(zgui_elements::editor().node_ref(first))
+                .child(zgui_elements::editor())
+                .into_view()
+                .build(cx),
+        )
+    });
+    let mut script = Script {
+        harness,
+        editor: first,
+    };
+    script.harness.settle(8);
+    script.press_named(NamedKey::Tab, KeyCode::Tab);
+    assert_eq!(
+        script.selection(),
+        Some(0..0),
+        "the first field holds focus"
+    );
+    // A frame paints only what its damage reaches, and the caret damages its own field alone. The
+    // pointer over the second field repaints that one too, as anything else moving there would.
+    script.deliver(SurfaceEvent::Pointer {
+        action: PointerAction::Moved,
+        event: PointerEvent::mouse(Point::new(CssPx(60.0), CssPx(72.0))),
+        modifiers: Modifiers::NONE,
+        timestamp: Timestamp::ORIGIN,
+    });
+    let carets = script.carets();
+    assert_eq!(
+        carets.len(),
+        1,
+        "one field holds focus, and carets stood in {}: {carets:?}",
+        carets.len()
+    );
+    // The root pads its top by 12 and each field is 40 high, so the first field ends at 52.
+    assert!(
+        carets[0].rect.origin.y.0 < 52.0,
+        "the caret stands in the field without focus: {carets:?}"
+    );
+}
