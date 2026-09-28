@@ -285,4 +285,45 @@ mod tests {
         );
         f.window.unmount();
     }
+
+    #[test]
+    fn a_branch_that_stays_through_a_rebuild_of_its_component_keeps_what_it_made() {
+        // A component rebuilt by its parent cleans its scope before its body runs again, and the
+        // branch it shows stays put when the answer is the same. What the branch made has to
+        // survive both.
+        let f = Fixture::new();
+        let made: Rc<Cell<Option<RwSignal<u8>>>> = Rc::new(Cell::new(None));
+        let component = |made: Rc<Cell<Option<RwSignal<u8>>>>| {
+            crate::view::Scoped::new(move || {
+                Show::new(
+                    || true,
+                    move || {
+                        let made = Rc::clone(&made);
+                        AnyView::new(crate::view::Scoped::new(move || {
+                            made.set(Some(RwSignal::new(7)));
+                            "shown"
+                        }))
+                    },
+                )
+            })
+        };
+        let mut state = f
+            .window
+            .with(|| component(Rc::clone(&made)).build(&mut f.cx()));
+        state.mount(&f.dom, f.root, None);
+        let signal = made.get().expect("the branch made a signal");
+
+        f.window
+            .with(|| component(Rc::clone(&made)).rebuild(&mut state, &mut f.cx()));
+        flush();
+        let now = made.get().expect("a signal");
+        assert_eq!(
+            now.try_get_untracked(),
+            Some(7),
+            "the branch still shows, and what it made was disposed of"
+        );
+        let _ = signal;
+        assert_eq!(f.text(), "shown");
+        f.window.unmount();
+    }
 }

@@ -50,6 +50,7 @@ impl<K: PartialEq + 'static> Branch<K> {
             content,
             cx,
             None,
+            false,
         );
         Self {
             hole,
@@ -62,7 +63,9 @@ impl<K: PartialEq + 'static> Branch<K> {
     /// Replaces the closures behind this hole, keeping the content that is already there.
     ///
     /// The new effect starts from the selection the old one last computed, so a rebuild whose
-    /// selection did not change moves no node and runs no cleanup.
+    /// selection did not change moves no node. It still rebuilds that content in place: a rebuild
+    /// comes from the component around the hole, which cleaned its scope first, and everything the
+    /// branch made went with it.
     pub(super) fn restart(
         &mut self,
         select: impl FnMut() -> K + 'static,
@@ -80,6 +83,7 @@ impl<K: PartialEq + 'static> Branch<K> {
             content,
             cx,
             previous,
+            true,
         ));
     }
 
@@ -97,9 +101,11 @@ impl<K: PartialEq + 'static> Branch<K> {
         content: impl Fn(&K) -> AnyView + 'static,
         cx: &mut BuildCx<'_>,
         initial: Option<K>,
+        refresh: bool,
     ) -> RenderEffect<K> {
         let scoped = cx.to_owned_cx();
         let parent = owner.clone();
+        let mut refresh = refresh;
         owner.with(|| {
             RenderEffect::new_with_value(
                 move |last: Option<K>| {
@@ -111,6 +117,18 @@ impl<K: PartialEq + 'static> Branch<K> {
                         hole.borrow_mut().set(scoped.dom(), Some(built));
                         if let Some(gone) = shown.borrow_mut().replace(scope) {
                             gone.cleanup();
+                        }
+                    } else if core::mem::take(&mut refresh) {
+                        let scope = shown
+                            .borrow_mut()
+                            .get_or_insert_with(|| parent.child())
+                            .clone();
+                        let within = scoped.with_owner(scope.clone());
+                        let mut hole = hole.borrow_mut();
+                        if let Some(existing) = hole.content_mut() {
+                            scope.with_cleanup(|| {
+                                content(&next).rebuild(existing, &mut within.cx());
+                            });
                         }
                     }
                     next
