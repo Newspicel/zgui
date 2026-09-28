@@ -976,6 +976,13 @@ impl Window {
     ) {
         let steps = {
             let document = self.document.borrow();
+            // An element that left the document between the ask and the dispatch has nothing left
+            // to reach: its listeners belong to a view that took it away, and that view's scope
+            // is gone with it. A press that asked for a click, then set off a rebuild, is the
+            // common case.
+            if !is_connected(document.store(), document.document_index(), key) {
+                return;
+            }
             let chain = zgui_input::HitChain::to_root(document.store(), key);
             let mut plan = zgui_input::dispatch::Plan::default();
             zgui_input::dispatch::resolve(document.store(), &chain, event, &mut plan);
@@ -990,5 +997,25 @@ impl Window {
             modifiers,
             timestamp,
         );
+    }
+}
+
+/// Whether `key` still hangs, through its ancestors, from the document node `document`.
+fn is_connected(
+    store: &zgui_dom::DocumentStore,
+    document: zgui_dom::NodeIndex,
+    key: zgui_dom::NodeKey,
+) -> bool {
+    let Some(mut index) = store.index_of(key) else {
+        return false;
+    };
+    loop {
+        if index == document {
+            return true;
+        }
+        match store.core(index).parent() {
+            Some(parent) => index = parent,
+            None => return false,
+        }
     }
 }
