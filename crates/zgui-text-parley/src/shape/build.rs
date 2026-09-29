@@ -56,10 +56,16 @@ pub(crate) fn shape(
     // request re-breaks the same glyphs.
     layout.break_all_lines(None);
     let has_boxes = !content.boxes.is_empty();
+    let wraps = content.runs.is_empty()
+        || content
+            .runs
+            .iter()
+            .any(|run| run.style.wrap_mode == zgui_text_style::WrapMode::Wrap);
     let engine = ShapedLayout {
         last: crate::shape::lines::read(&layout, has_boxes, prefix.len()),
         layout,
         prefix: prefix.len(),
+        wraps,
     };
     ShapedParagraph::new(
         key,

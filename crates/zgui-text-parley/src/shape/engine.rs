@@ -24,4 +24,7 @@ pub struct ShapedLayout {
     /// The lines the current break produced, kept so that a request the glyphs already reflect can
     /// be answered without breaking again.
     pub(crate) last: BrokenParagraph,
+    /// Whether any run of the paragraph may wrap. A paragraph with none breaks only where its
+    /// text forces a break.
+    pub(crate) wraps: bool,
 }

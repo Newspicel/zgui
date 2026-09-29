@@ -27,6 +27,7 @@ pub(crate) fn break_lines(
     let indent = request.indent();
     let alignment = alignment(request.paragraph.align);
     let prefix = shaped.engine.prefix;
+    let wraps = shaped.engine.wraps;
     let layout = &mut shaped.engine.layout;
 
     boxes::push_geometry(layout, request.boxes);
@@ -40,7 +41,16 @@ pub(crate) fn break_lines(
         },
     );
     if request.bands.is_empty() {
-        layout.break_all_lines(request.max_advance.map(|width| width.0));
+        let mut max_advance = request.max_advance.map(|width| width.0);
+        // The engine marks a break after every inline box, whatever the wrap mode. A line that
+        // may not wrap and overflows would break back at such a box, so it is broken at a width
+        // that holds its longest line. The line keeps its own width, and whatever cuts it off
+        // still sees it overflow the box.
+        if !wraps && has_boxes {
+            layout.break_all_lines(None);
+            max_advance = max_advance.map(|width| width.max(layout.full_width()));
+        }
+        layout.break_all_lines(max_advance);
     } else {
         bands::break_banded(
             layout,
