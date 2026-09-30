@@ -86,8 +86,8 @@ pub use crate::context_menu::{
     ContextMenuTriggerProps,
 };
 pub use crate::data_table::{
-    Column, ColumnResizer, ColumnResizerProps, DataModel, DataTable, DataTableProps, Page,
-    RowMatch, SortState,
+    Column, ColumnResizer, ColumnResizerProps, DataModel, DataTable, DataTableProps, GripEdge,
+    Page, RowMatch, SortState,
 };
 pub use crate::date_picker::{DatePicker, DatePickerProps};
 pub use crate::dialog::{

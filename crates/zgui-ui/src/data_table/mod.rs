@@ -7,7 +7,7 @@ mod style;
 
 pub use crate::data_table::column::{CellOrder, CellText, Column, track_list};
 pub use crate::data_table::model::{DataModel, Page, RowId, RowMatch, SortState};
-pub use crate::data_table::resize::{ColumnResizer, ColumnResizerProps, MIN_WIDTH};
+pub use crate::data_table::resize::{ColumnResizer, ColumnResizerProps, GripEdge, MIN_WIDTH};
 pub use crate::data_table::style::DataTableStyle;
 
 use std::collections::BTreeMap;

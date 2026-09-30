@@ -277,7 +277,7 @@ pub use crate::context_menu::{
 };
 pub use crate::data_table::{
     CellOrder, CellText, Column, ColumnResizer, ColumnResizerProps, DataModel, DataTable,
-    DataTableProps, DataTableStyle, Page, RowId, RowMatch, SortState,
+    DataTableProps, DataTableStyle, GripEdge, Page, RowId, RowMatch, SortState,
 };
 pub use crate::date_picker::{DatePicker, DatePickerProps, DatePickerStyle};
 pub use crate::dialog::{

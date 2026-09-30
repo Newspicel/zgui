@@ -818,6 +818,78 @@ fn a_columns_width_is_changed_from_the_keyboard_and_reaches_the_track_list() {
     );
 }
 
+#[test]
+fn a_grip_on_the_leading_edge_widens_its_column_towards_the_leading_side() {
+    let harness = Harness::open();
+    let width = harness.window.scope.with(|| RwSignal::new_local(0.0_f32));
+    let resets = harness.window.scope.with(|| RwSignal::new_local(0_u32));
+    harness.mount(move || {
+        let cell = NodeRef::new();
+        view! {
+            box(node_ref = cell, class = "column") {
+                ColumnResizer(
+                    header = cell,
+                    label = "Age",
+                    edge = GripEdge::Leading,
+                    on_resize = UnsyncCallback::new(move |next: f32| width.set(next)),
+                    on_reset = UnsyncCallback::new(move |()| resets.update(|count| *count += 1))
+                )
+            }
+        }
+    });
+
+    let column = harness.find("column");
+    harness.window.place(column, 100.0, 0.0, 120.0, 32.0);
+    let grip = harness.find("zui-data-table__grip");
+
+    point_at(
+        &harness,
+        grip,
+        zgui::vocab::EventKind::PointerDown,
+        100.0,
+        16.0,
+    );
+    point_at(
+        &harness,
+        grip,
+        zgui::vocab::EventKind::PointerMove,
+        70.0,
+        16.0,
+    );
+    assert_eq!(
+        width.get_untracked(),
+        150.0,
+        "moving the edge left widens the column"
+    );
+    point_at(
+        &harness,
+        grip,
+        zgui::vocab::EventKind::PointerUp,
+        70.0,
+        16.0,
+    );
+
+    harness.press(grip, NamedKey::ArrowRight);
+    assert_eq!(
+        width.get_untracked(),
+        112.0,
+        "the arrow moves the edge the way it points"
+    );
+
+    point_at(
+        &harness,
+        grip,
+        zgui::vocab::EventKind::DoubleClick,
+        70.0,
+        16.0,
+    );
+    assert_eq!(
+        resets.get_untracked(),
+        1,
+        "a double click asks for the declared width"
+    );
+}
+
 // ---- the calendar ------------------------------------------------------------------------------
 
 /// A calendar showing July 2026, and its grid element.

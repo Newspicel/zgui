@@ -10,6 +10,31 @@ use zgui::{component, view};
 /// every table that allows it grows a "reset columns" button to undo it.
 pub const MIN_WIDTH: f32 = 48.0;
 
+/// Which edge of its column a grip stands on.
+///
+/// A grip on the trailing edge widens its column as it moves towards the trailing side. A grip on
+/// the leading edge widens its column as it moves towards the leading side, which is what a column
+/// to the trailing side of a flexible one needs: the flexible column gives up the room, and the
+/// edge stays under the pointer.
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+pub enum GripEdge {
+    /// The edge after the column.
+    #[default]
+    Trailing,
+    /// The edge before the column.
+    Leading,
+}
+
+impl GripEdge {
+    /// How a movement of the edge towards the trailing side changes the width.
+    const fn sign(self) -> f32 {
+        match self {
+            Self::Trailing => 1.0,
+            Self::Leading => -1.0,
+        }
+    }
+}
+
 /// A grip that resizes the column it sits in.
 ///
 /// ```
@@ -38,7 +63,8 @@ pub const MIN_WIDTH: f32 = 48.0;
 ///
 /// # Keyboard
 ///
-/// A separator is a tab stop, and <kbd>←</kbd> and <kbd>→</kbd> move it by `step` pixels. A table
+/// A separator is a tab stop, and <kbd>←</kbd> and <kbd>→</kbd> move it by `step` pixels, in the
+/// direction the arrow points, whichever edge the grip stands on. A table
 /// whose columns can only be dragged is a table whose columns cannot be resized without a pointer,
 /// and the arrow keys cost one handler.
 ///
@@ -59,6 +85,12 @@ pub fn ColumnResizer(
     /// How far one arrow key moves the edge, in CSS pixels.
     #[prop(default = 8.0)]
     step: f32,
+    /// Which edge of the column the grip stands on.
+    #[prop(default = GripEdge::Trailing)]
+    edge: GripEdge,
+    /// Told when the grip is double-clicked, for a caller that gives the column back its own width.
+    #[prop(optional)]
+    on_reset: Option<UnsyncCallback<()>>,
     /// Classes merged after the grip's own.
     #[prop(into, optional)]
     class: Classes,
@@ -104,7 +136,7 @@ pub fn ColumnResizer(
             },
             on:pointer_move = move |ev| {
                 let Some((from, width)) = origin.get_untracked() else { return };
-                on_resize.run((width + (ev.position.x.0 - from)).max(MIN_WIDTH));
+                on_resize.run((width + edge.sign() * (ev.position.x.0 - from)).max(MIN_WIDTH));
             },
             on:pointer_up = move |ev| {
                 origin.set(None);
@@ -114,6 +146,12 @@ pub fn ColumnResizer(
                 origin.set(None);
                 ev.release_pointer();
             },
+            on:double_click = move |ev| {
+                if let Some(reset) = on_reset {
+                    reset.run(());
+                    ev.stop_propagation();
+                }
+            },
             on:key_down = move |ev| {
                 let by = match &ev.key {
                     zgui::vocab::Key::Named(zgui::vocab::NamedKey::ArrowLeft) => -step,
@@ -121,7 +159,7 @@ pub fn ColumnResizer(
                     _ => return,
                 };
                 let Some(width) = width_now() else { return };
-                on_resize.run((width + by).max(MIN_WIDTH));
+                on_resize.run((width + edge.sign() * by).max(MIN_WIDTH));
                 ev.prevent_default();
                 ev.stop_propagation();
             },
