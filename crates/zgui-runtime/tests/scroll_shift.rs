@@ -36,6 +36,7 @@ root { display: block; width: 400px; height: 300px; background-color: #ffffff }
 .port { display: block; width: 400px; height: 280px; overflow: scroll;
         background-color: #101010 }
 .bare { background-color: rgba(0, 0, 0, 0.5) }
+.away { margin-top: 12px; margin-left: 24px; width: 300px; height: 200px }
 .patterned { background-image: linear-gradient(#000000, #ffffff) }
 .row { display: block; width: 400px; height: 20px; background-color: #202020 }
 .over { display: block; width: 400px; height: 40px; background-color: #900000;
@@ -263,5 +264,38 @@ fn something_drawn_over_the_port_refuses_the_shift() {
         overdrawn > clear * 2,
         "the composed pixels are the composite, so a box drawn over the port would be moved with \
          the content under it: {overdrawn} against {clear}",
+    );
+}
+
+/// The port a renderer is asked to move is the one on the device, wherever the list stands.
+///
+/// A list at the top left corner of the window has its port at the origin in both spaces, so only
+/// a list away from that corner tells the container's own space from the device's. Moving the
+/// pixels at the origin while the list stands elsewhere leaves the list as it was drawn, and a
+/// frame that owes it only the band the move uncovered never draws it again.
+#[test]
+fn the_port_moved_is_where_the_list_stands() {
+    let _recording = Recording::begin();
+
+    let mut harness = listing(200, "away", false, true, "");
+    harness.settle(16);
+    wheel(&mut harness, 3.0);
+
+    let window = harness.app().windows().first().expect("a window");
+    let shift = window
+        .renderer()
+        .as_any()
+        .and_then(|any| any.downcast_ref::<zgui_testkit_scene::CaptureRenderer>())
+        .expect("the window draws through the capture renderer")
+        .last_shift()
+        .expect("an opaque list over a plain page scrolls by moving its pixels");
+    assert_eq!(
+        (shift.port.origin.x, shift.port.origin.y),
+        (24, 12),
+        "the port has to be the list's own rectangle on the device: {shift:?}",
+    );
+    assert!(
+        shift.port.size.height <= 200 && shift.port.size.width <= 300,
+        "the port cannot reach past the list: {shift:?}",
     );
 }

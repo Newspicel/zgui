@@ -24,7 +24,7 @@ use zgui_css::ComputedStyle;
 use zgui_css::values::image::ImageValue;
 use zgui_dom::NodeKey;
 use zgui_dom::side::BoxKey;
-use zgui_geom::{Device, DevicePx, Rect};
+use zgui_geom::{Device, DevicePx, Rect, Size};
 use zgui_layout::FragmentKind;
 use zgui_layout::LayoutStore;
 use zgui_layout::scroll_region;
@@ -56,10 +56,12 @@ pub fn port_may_be_shifted(
     let Some(&box_key) = store.boxes_of(container).first() else {
         return Err(Refusal::NotAScroller);
     };
-    let Some(region) = scroll_region::region_of(store, box_key) else {
+    if scroll_region::region_of(store, box_key).is_none() {
+        return Err(Refusal::NotAScroller);
+    }
+    let Some(port) = scrollport_on_device(store, box_key) else {
         return Err(Refusal::NotAScroller);
     };
-    let port = region.scrollport;
     // Two independent conditions, and neither implies the other. A port with an opaque background
     // of its own still cannot be moved if a dialog is drawn over it, and a port with nothing over
     // it still cannot be moved if what shows through it is a gradient.
@@ -68,6 +70,26 @@ pub fn port_may_be_shifted(
     }
     backing(store, box_key, port)?;
     Ok(port)
+}
+
+/// Where the pixels `box_key` scrolls stand on the device.
+///
+/// A scroll region reports its port in the container's own space, at the origin, because that is
+/// the space its offsets are measured in. The composed target and the damage set are measured on
+/// the device, and every test below compares the port against fragments that are. So the port is
+/// taken from the container's own fragment: the padding box, less the scrollbar gutter on the
+/// sides the layout engine took it off. A port read at the origin names the pixels at the top left
+/// of the window, which only coincide with the list's when the list stands there.
+fn scrollport_on_device(store: &LayoutStore, box_key: BoxKey) -> Option<Rect<DevicePx, Device>> {
+    let layout = store.layout_of(box_key)?;
+    let piece = store.fragment(*store.fragments_of_box(box_key).first()?)?;
+    let padding = piece.padding_box;
+    let width = (padding.size.width.0 - layout.scrollbar_size.width.0).max(0.0);
+    let height = (padding.size.height.0 - layout.scrollbar_size.height.0).max(0.0);
+    Some(Rect::new(
+        padding.origin,
+        Size::new(DevicePx(width), DevicePx(height)),
+    ))
 }
 
 /// Whether nothing painted *after* `box_key` puts ink inside `port`.

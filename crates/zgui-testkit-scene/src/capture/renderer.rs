@@ -157,6 +157,14 @@ impl Renderer for CaptureRenderer {
         self.shifts
     }
 
+    fn as_any(&self) -> Option<&dyn std::any::Any> {
+        Some(self)
+    }
+
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn shift_composed(&mut self, shift: zgui_render::ScrollShift) {
         self.last_shift = Some(shift);
     }
