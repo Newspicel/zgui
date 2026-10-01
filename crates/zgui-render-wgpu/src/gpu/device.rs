@@ -12,11 +12,14 @@ use crate::gpu::loss::DeviceLoss;
 /// The optional features asked for when they are offered, and done without when they are not.
 ///
 /// Dual-source blending is what per-channel text antialiasing needs, and it is optional on real
-/// drivers. Nothing here is required: a missing feature changes which primitives are emitted, and
+/// drivers. 16-bit normalised textures are what 10- and 12-bit video planes are sampled from.
+/// Nothing here is required: a missing feature changes which primitives are emitted, and
 /// a device that refuses to open because it lacks one would be a device that renders nothing at
 /// all rather than one that renders slightly worse text.
 fn optional_features() -> wgpu::Features {
-    wgpu::Features::DUAL_SOURCE_BLENDING | wgpu::Features::PIPELINE_CACHE
+    wgpu::Features::DUAL_SOURCE_BLENDING
+        | wgpu::Features::PIPELINE_CACHE
+        | wgpu::Features::TEXTURE_FORMAT_16BIT_NORM
 }
 
 /// A device, its queue, the adapter they came from and the instance behind all three.
