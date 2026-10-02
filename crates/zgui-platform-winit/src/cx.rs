@@ -213,6 +213,7 @@ impl PlatformCx for WinitCx<'_> {
             id,
             Arc::clone(&window),
             title_buttons(attributes),
+            Arc::clone(&self.shared.waker),
         ));
         surface.place_title_buttons();
         #[cfg(target_os = "macos")]

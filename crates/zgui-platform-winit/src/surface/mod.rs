@@ -18,6 +18,8 @@ use zgui_platform::{
     SurfaceId, TextInput, TitleButtons, Unsupported, WindowIcon, WindowLevel,
 };
 
+use crate::waker::ProxyWaker;
+
 /// A window, seen as something to draw into and interact with.
 ///
 /// It is shared and thread-safe because the one operation that has to work from anywhere is asking
@@ -42,6 +44,8 @@ pub struct WinitSurface {
     window: Arc<Window>,
     /// Where the window buttons sit, when the application placed them.
     title_buttons: Option<TitleButtons>,
+    /// How a frame request reaches the loop when the platform does not deliver it.
+    waker: Arc<ProxyWaker>,
 }
 
 impl WinitSurface {
@@ -50,11 +54,13 @@ impl WinitSurface {
         id: SurfaceId,
         window: Arc<Window>,
         title_buttons: Option<TitleButtons>,
+        waker: Arc<ProxyWaker>,
     ) -> Self {
         Self {
             id,
             window,
             title_buttons,
+            waker,
         }
     }
 
@@ -136,7 +142,13 @@ impl Surface for WinitSurface {
     }
 
     fn request_redraw(&self) {
-        self.window.request_redraw();
+        // Windows paints only visible windows, and a surface stays hidden until its first frame
+        // presents. The loop delivers the request for a hidden window itself.
+        if cfg!(windows) && self.window.is_visible() == Some(false) {
+            self.waker.redraw(self.window.id());
+        } else {
+            self.window.request_redraw();
+        }
     }
 
     fn pre_present_notify(&self) {
