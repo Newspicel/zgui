@@ -273,6 +273,7 @@ fn plan_rect(
             Batch::Vector(index) => {
                 match vectors.and_then(|plan| plan.passes.get(index).map(|pass| (plan, pass))) {
                     Some((plan, pass)) => {
+                        builder.round(pass.round);
                         let (first, count) = builder.stage_vector(vector::instances_of(plan, pass));
                         if count == 0 {
                             builder.defer();

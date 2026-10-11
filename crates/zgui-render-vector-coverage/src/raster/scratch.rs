@@ -7,17 +7,16 @@ use zgui_render_wgpu::Gpu;
 /// The format both textures hold, and the one a composite reads.
 pub const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 
-/// One array texture per stage, in the surface's own coordinates, with room for the passes of one
-/// frame that cannot share a layer.
+/// One array texture per stage, with room for one round of a frame's passes.
 ///
 /// There are two of them and not one because compositing several outlines over each other is only a
 /// fixed-function blend in premultiplied form, while the rasteriser contract says what a composite
 /// reads holds *straight* colour. So outlines accumulate premultiplied in the first and one draw
 /// converts the whole layer into the second.
 ///
-/// A layer holds device pixels where they belong rather than in a corner of its own, so two passes
-/// that do not meet on the screen share one layer. Both textures cost the same, which is why this
-/// rasteriser cares about the depth twice as much as the other one does.
+/// Each pass is rasterised into a bin of its own size in some layer, so the depth follows the area
+/// of a frame's passes. Both textures cost the same, which is why this rasteriser cares about the
+/// depth twice as much as the other one does.
 #[derive(Debug)]
 pub struct Scratch {
     /// Where outlines accumulate, premultiplied.
@@ -47,16 +46,12 @@ struct Textures {
 
 impl Scratch {
     /// How many layers a scratch starts with, and the fewest it ever shrinks to.
-    pub const LAYERS: u32 = 4;
+    pub const LAYERS: u32 = 1;
 
-    /// The most layers a frame may have.
+    /// The most layers one round may have.
     ///
-    /// **This is a ceiling rather than a wrap, and it is reached by overlap rather than by count.**
-    /// Every pass of a frame is rasterised before any of them is composited, so a layer holds its
-    /// pass's coverage until that pass's composite has read it. Passes that do not overlap on the
-    /// surface share a layer freely; only a frame with this many passes stacked over one point runs
-    /// out, and it reports that it could not do the work rather than putting one on top of another,
-    /// which would cost the wrong content in the right place.
+    /// A frame whose passes need more is rasterised in rounds, and each round reuses the layers
+    /// after the composites of the round before it have read them.
     pub const MAX_LAYERS: u32 = 64;
 
     /// An unallocated scratch.

@@ -256,14 +256,14 @@ impl WgpuRenderer {
             consecutive_validation_failures: 0,
             origin,
             backends,
-            // Loud where a developer will see it, survivable where a user is waiting. A frame
-            // planning more vector passes than there are scratch layers is a ceiling that has been
-            // reached rather than a condition anyone chose, and it costs real content either way.
+            // Loud where a developer will see it, survivable where a user is waiting. A rasteriser
+            // that runs out of capacity has reached a ceiling rather than a condition anyone chose,
+            // and it costs real content either way.
             vector_shortfall_is_fatal: cfg!(debug_assertions),
         }
     }
 
-    /// Decides whether running out of vector scratch layers stops the program.
+    /// Decides whether a vector rasteriser running out of capacity stops the program.
     ///
     /// It does by default in a build with debug assertions on, because a ceiling reached silently
     /// is a ceiling nobody raises. A test that drives a frame past the ceiling on purpose turns it

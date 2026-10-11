@@ -11,8 +11,8 @@ use vello::{AaConfig, RenderParams, peniko::Color as PenikoColor};
 use zgui_geom::{Device, Rect};
 use zgui_profile::{Counter, counter};
 use zgui_render::{
-    Layering, MemoryReport, VectorError, VectorFrame, VectorPass, VectorPlan, VectorRaster,
-    VectorTarget,
+    Capacity, Layering, MemoryReport, VectorError, VectorFrame, VectorPass, VectorPlan,
+    VectorRaster, VectorTarget,
 };
 use zgui_render_wgpu::Gpu;
 use zgui_render_wgpu::frame::vector::VectorSource;
@@ -48,6 +48,10 @@ pub struct VelloRaster {
     passes: u32,
     /// How many layers the last frame's passes needed.
     depth: u32,
+    /// How many rounds the last frame's passes needed.
+    rounds: usize,
+    /// How much scratch one round may hold.
+    capacity: Capacity,
 }
 
 /// The coverage method every rasterisation asks for.
@@ -98,7 +102,23 @@ impl VelloRaster {
             last: Encoded::default(),
             passes: 0,
             depth: 0,
+            rounds: 0,
+            capacity: Capacity::DEFAULT,
         })
+    }
+
+    /// This rasteriser with `capacity` of scratch per round.
+    ///
+    /// The layers are clamped to [`Scratch::MAX_LAYERS`].
+    #[must_use]
+    pub fn with_capacity(self, capacity: Capacity) -> Self {
+        Self {
+            capacity: Capacity {
+                layers: capacity.layers.clamp(1, Scratch::MAX_LAYERS),
+                ..capacity
+            },
+            ..self
+        }
     }
 
     /// Which coverage method every rasterisation asks for.
@@ -116,12 +136,17 @@ impl VelloRaster {
         self.passes
     }
 
-    /// How many scratch layers the last frame's passes needed.
+    /// How many scratch layers the last frame's passes needed in its fullest round.
     ///
-    /// The frame's own demand, which is what says how much of it overlapped — not how many layers
-    /// are allocated, which never falls below a floor and follows the demand down only slowly.
+    /// The frame's own demand, which follows the area of its passes. It is not how many layers are
+    /// allocated, which never falls below a floor and follows the demand down only slowly.
     pub fn depth(&self) -> u32 {
         self.depth
+    }
+
+    /// How many rounds the last frame's passes needed.
+    pub fn rounds(&self) -> usize {
+        self.rounds
     }
 
     /// How many item encodings are held, and how the last frame's lookups went.
@@ -139,47 +164,40 @@ impl VelloRaster {
         self.scratch.extent()
     }
 
-    /// Sorts the passes that were given a layer into the layer each one went into.
+    /// Sorts the passes of one round into the layer each one went into.
     ///
     /// One rasterisation per layer is the whole point of sharing: a frame of five hundred passes
-    /// that nowhere overlap costs one rasterisation, where one per pass cost five hundred of them
-    /// and each one is a recording, a submission and its own fixed overhead.
-    fn group(&mut self, passes: &[VectorPass]) {
+    /// costs one rasterisation, where one per pass cost five hundred of them and each one is a
+    /// recording, a submission and its own fixed overhead.
+    fn group(&mut self, plan: &VectorPlan, round: core::ops::Range<usize>) {
         let layers = (self.scratch.layers() as usize).max(1);
         for bucket in &mut self.layered {
             bucket.clear();
         }
         self.layered.resize_with(layers, Vec::new);
         self.scenes.resize_with(layers, vello::Scene::new);
-        for (index, pass) in passes.iter().enumerate() {
-            if let Some(bucket) = self.layered.get_mut(pass.target.0 as usize) {
+        for index in round {
+            if let Some(bucket) = self.layered.get_mut(plan.passes[index].target.0 as usize) {
                 bucket.push(index);
             }
         }
     }
 
-    /// Encodes and rasterises one frame's passes.
+    /// Encodes and rasterises one round of a frame's passes.
     fn prepare_frame(&mut self, frame: &mut VectorFrame<'_>) -> Result<(), VectorError> {
-        self.last = Encoded::default();
-        self.passes = 0;
+        if frame.round == 0 {
+            self.last = Encoded::default();
+            self.passes = 0;
+        }
         if frame.is_empty() {
             return Ok(());
         }
-        // The passes that were given a layer are a prefix, so the ones that were not are exactly the
-        // tail a shortened plan drops — and a composite is named by its index, so it has to be a
-        // tail and not a scattering.
-        let prepared = frame
-            .plan
-            .passes
-            .iter()
-            .position(|pass| pass.target == VectorTarget::NONE)
-            .unwrap_or(frame.plan.passes.len());
-        self.group(&frame.plan.passes[..prepared]);
+        self.group(frame.plan, frame.passes());
         let (hits, misses) = self.encodings.counts();
         let mut renderer = self.shared.lock();
         for layer in 0..self.layered.len() {
-            // One rasterisation for the whole layer, because everything in it is one picture: the
-            // passes sharing it are disjoint on the surface, so their coverage is disjoint here.
+            // One rasterisation for the whole layer, because everything in it is one picture: each
+            // pass sharing it has a bin of its own, so their coverage is disjoint here.
             let scene = &mut self.scenes[layer];
             scene.reset();
             let mut width = 0;
@@ -238,23 +256,8 @@ impl VelloRaster {
         let (hits_now, misses_now) = self.encodings.counts();
         counter::add(Counter::VectorEncodeHits, hits_now - hits);
         counter::add(Counter::VectorEncodeMisses, misses_now - misses);
-        if prepared < frame.plan.passes.len() {
-            // More passes stacked over one point than there are layers to keep them apart. Reporting
-            // it is what makes this frame's vector content missing rather than jumbled: the
-            // alternative is two overlapping passes on one layer, and then one composite draws the
-            // other's paths.
-            return Err(VectorError::OutOfCapacity {
-                detail: format!(
-                    "a frame planned {} passes and {} of them could be given one of {} layers",
-                    frame.plan.passes.len(),
-                    prepared,
-                    Scratch::MAX_LAYERS
-                ),
-                // Every earlier pass has a layer to itself or shares one with a pass it does not
-                // touch, and is safe to composite. Only this one and the ones after it have nowhere
-                // to go.
-                prepared,
-            });
+        if !frame.is_last_round() {
+            return Ok(());
         }
         if self.last.unclippable > 0 {
             tracing::warn!(
@@ -285,37 +288,38 @@ impl VectorRaster for VelloRaster {
             return VectorPlan::empty();
         }
         let mut plan = VectorPlan::resourcing(passes);
-        // Layers are shared by passes that do not meet on the surface. Every pass of a frame is
-        // still rasterised before any of them is composited, so a layer holds its passes' coverage
-        // until their composites have read it — and because a layer is in device coordinates,
-        // passes that do not overlap there do not overlap in it either.
+        // Each pass gets a bin of its own size in some layer, so passes share a layer whatever they
+        // cover on the surface. A frame larger than one scratch is cut into rounds, and each round
+        // is rasterised after the composites of the round before it have read the layers.
         self.regions.clear();
         self.regions
             .extend(passes.passes.iter().map(|planned| planned.region));
-        let layering = Layering::of(&self.regions, Scratch::MAX_LAYERS);
-        let (packed, width, height) = layering.compact(&self.regions);
+        let layering = Layering::of(&self.regions, self.capacity);
         self.depth = layering.layers();
+        self.rounds = layering.rounds();
         for (index, planned) in passes.passes.iter().enumerate() {
+            let Some(placement) = layering.placement(index) else {
+                continue;
+            };
             plan.passes.push(VectorPass {
                 region: planned.region,
-                raster_region: packed[index],
-                target: layering.target(index),
+                raster_region: placement.bin,
+                target: placement.target,
+                round: placement.round,
                 items: planned.items.clone(),
                 clip: planned.clip,
                 instanced: planned.instanced,
                 clamped: planned.clamped,
             });
         }
-        // The far corner of the surface anything is drawn at, not the largest region: a layer holds
-        // device pixels where they belong, so it has to reach as far as the furthest of them.
+        let (width, height) = layering.extent();
         self.scratch
             .ensure(&self.gpu, width, height, layering.layers());
         plan
     }
 
-    fn clear_targets(&mut self, plan: &VectorPlan) {
-        let mut layers: Vec<u32> = plan
-            .passes
+    fn clear_targets(&mut self, plan: &VectorPlan, round: usize) {
+        let mut layers: Vec<u32> = plan.passes[plan.round(round)]
             .iter()
             .filter(|pass| pass.target != VectorTarget::NONE)
             .map(|pass| pass.target.0 as u32)
@@ -327,8 +331,11 @@ impl VectorRaster for VelloRaster {
 
     fn prepare(&mut self, frame: &mut VectorFrame<'_>) -> Result<(), VectorError> {
         let prepared = self.prepare_frame(frame);
-        // Every return of the frame ends it, so an encoding no frame drew ages whatever happened.
-        self.encodings.end_frame();
+        // Every return of the frame's last round ends it, so an encoding no frame drew ages
+        // whatever happened.
+        if frame.is_last_round() {
+            self.encodings.end_frame();
+        }
         prepared
     }
 

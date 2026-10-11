@@ -37,8 +37,8 @@ pub struct Encoded {
 ///
 /// The scene is not reset, because a scratch layer holds every pass assigned to it and those passes
 /// are rasterised together — one scene, one rasterisation, whatever the layer's share of the frame
-/// turned out to be. Device coordinates are what makes that sound: two passes on one layer do not
-/// overlap on the surface, so they do not overlap in the scene either.
+/// turned out to be. Bins are what makes that sound: two passes on one layer have bins that do not
+/// meet, whatever they cover on the surface.
 pub fn pass(
     scene: &mut Scene,
     cache: &mut Encodings,

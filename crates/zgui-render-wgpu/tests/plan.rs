@@ -299,6 +299,117 @@ fn a_blend_mode_this_phase_cannot_composite_is_counted_rather_than_composited_wr
     );
 }
 
+/// A scene of three squares stacked over one point, each in a vector pass of its own.
+fn three_stacked_passes(damage: &DamageSet) -> Scene {
+    use zgui_scene::kurbo::Shape as _;
+
+    let mut scene = Scene::new();
+    scene.begin_frame(Size::new(SIDE, SIDE));
+    let paint = scene
+        .paints
+        .add(zgui_scene::Paint::Solid(opaque(10, 20, 30)));
+    let clear = scene
+        .paints
+        .add(zgui_scene::Paint::Solid(zgui_color::Color::srgb_u8(
+            0, 0, 0, 0,
+        )));
+    for index in 0..3 {
+        let square = std::sync::Arc::new(
+            zgui_scene::kurbo::Rect::new(16.0, 16.0, 112.0, 112.0).to_path(0.1),
+        );
+        scene.push_vector(zgui_scene::VectorItem::filled(
+            zgui_scene::VectorId(index),
+            square,
+            paint,
+        ));
+        scene.push_quad(Quad::filled(rect(16.0, 16.0, 96.0, 96.0), clear));
+    }
+    scene.finish(damage);
+    scene
+}
+
+/// A resourced plan of `scene`'s passes, rasterised in the given rounds.
+fn in_rounds(scene: &Scene, rounds: &[usize]) -> zgui_render::VectorPlan {
+    let planned = scene.pass_plan();
+    assert_eq!(planned.passes.len(), rounds.len(), "one round per pass");
+    let mut plan = zgui_render::VectorPlan::resourcing(planned);
+    for (pass, &round) in planned.passes.iter().zip(rounds) {
+        plan.passes.push(zgui_render::VectorPass {
+            region: pass.region,
+            raster_region: Rect::new(Point::new(0, 0), pass.region.size),
+            target: zgui_render::VectorTarget(0),
+            round,
+            items: pass.items.clone(),
+            clip: pass.clip,
+            instanced: pass.instanced,
+            clamped: pass.clamped,
+        });
+    }
+    plan
+}
+
+/// The rounds a plan rasterises between its runs, in order.
+fn rounds_of(planned: &FramePlan) -> Vec<usize> {
+    planned.segments.iter().filter_map(Segment::round).collect()
+}
+
+#[test]
+fn a_later_vector_round_cuts_the_plan_before_its_first_composite() {
+    let Some(renderer) = plain_renderer() else {
+        return;
+    };
+    let scene = three_stacked_passes(&DamageSet::full());
+    let vectors = in_rounds(&scene, &[0, 1, 1]);
+    let planned = plan_with_vectors(renderer.gpu(), &scene, &DamageSet::full(), Some(&vectors));
+
+    assert_eq!(
+        rounds_of(&planned),
+        [1],
+        "round zero is rasterised before the frame, and round one once, before its first pass"
+    );
+    let runs: Vec<_> = planned.runs().collect();
+    assert_eq!(runs.len(), 2, "one cut, two runs");
+    assert_eq!(runs[0].0, None);
+    assert_eq!(runs[1].0, Some(1));
+    let composites = |segments: &[Segment]| {
+        segments
+            .iter()
+            .filter_map(Segment::pass)
+            .flat_map(|pass| planned.draws_of(pass))
+            .filter(|draw| matches!(draw, PlannedDraw::Vector { .. }))
+            .count()
+    };
+    assert_eq!(
+        (composites(runs[0].1), composites(runs[1].1)),
+        (1, 2),
+        "each composite is recorded after the round that rasterised its pass"
+    );
+    let reopened = runs[1].1.iter().find_map(Segment::pass).expect("a pass");
+    assert_eq!(
+        reopened.target,
+        TargetRef::Composed,
+        "the cut pass opens again on the target it was drawing into"
+    );
+}
+
+#[test]
+fn each_damaged_rectangle_runs_the_vector_rounds_from_the_first() {
+    let Some(renderer) = plain_renderer() else {
+        return;
+    };
+    let mut two = DamageSet::new();
+    two.absorb(Rect::new(Point::new(0, 0), Size::new(32, 32)));
+    two.absorb(Rect::new(Point::new(80, 80), Size::new(32, 32)));
+    let scene = three_stacked_passes(&two);
+    let vectors = in_rounds(&scene, &[0, 1, 1]);
+    let planned = plan_with_vectors(renderer.gpu(), &scene, &two, Some(&vectors));
+    assert_eq!(
+        rounds_of(&planned),
+        [1, 0, 1],
+        "the second rectangle needs round zero back before it can draw its first composite"
+    );
+}
+
 #[test]
 fn no_pass_outlives_its_encoder_by_being_told_to_forget_it() {
     // `forget_lifetime` would compile and would hide the ordering constraint the planner exists to

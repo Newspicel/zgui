@@ -331,12 +331,12 @@ fn a_pass_clip_cuts_the_composite_exactly_where_a_quad_would_be_cut() {
     assert_eq!(with_vector.rgba(8, 8), [0, 0, 0, 255]);
 }
 
-/// Every pass of a frame gets a scratch layer of its own.
+/// Every pass of a frame gets a bin of its own.
 ///
-/// This is not a resourcing nicety. *Every* pass is rasterised before *any* of them is composited,
-/// because the rasteriser submits work of its own and that has to precede the frame's own recording
-/// — so two passes sharing a layer would have the second overwrite the first, and the first
-/// composite would then draw the second's paths in the first's place.
+/// This is not a resourcing nicety. Every pass of a round is rasterised before any of them is
+/// composited, because the rasteriser submits work of its own and that has to precede the
+/// recording that reads it — so two passes sharing a bin would have the second overwrite the
+/// first, and the first composite would then draw the second's paths in the first's place.
 #[test]
 fn eight_passes_keep_eight_different_pictures() {
     let Some(mut harness) = harness(Which::Vello) else {

@@ -1,10 +1,9 @@
 //! How many vector passes a frame plans, and how many scratch layers they need between them.
 //!
 //! Two questions, and the second is the one a budget answers. A pass is a rasterisation of a region
-//! of the surface; passes that do not meet on the surface can be rasterised into one layer, so what
-//! a scratch texture costs is not how many passes a frame plans but how deeply they stack over each
-//! other. This reports both, over a scroll, from the document's own pass plan rather than from a
-//! device.
+//! of the surface into a bin of its own size in a scratch layer, so what a scratch texture costs is
+//! the area of a frame's passes and not how many there are. This reports both, over a scroll, from
+//! the document's own pass plan rather than from a device.
 //!
 //! The sample is taken **as the frame is drawn** and not afterwards. A frame's pass plan is a
 //! function of the damage it answered, and by the time the loop has gone quiet the damage has been
@@ -13,15 +12,12 @@
 use std::cell::RefCell;
 
 use zgui::bits::DamageSet;
-use zgui::render::Layering;
+use zgui::render::{Capacity, Layering};
 use zgui::scene::Scene;
 
 use crate::input::wheel;
 use crate::phase::Driver;
 use crate::verify::repaint_everything;
-
-/// The most layers a rasteriser has.
-const CEILING: u32 = 64;
 
 /// How many wheel notches the measurement drives.
 const NOTCHES: usize = 600;
@@ -36,7 +32,7 @@ struct Frame {
     passes: usize,
     /// How many scratch layers those passes need between them.
     depth: u32,
-    /// Whether any of them could not be given one.
+    /// Whether they need more than one round.
     over: bool,
     /// Whether the frame redrew the whole surface.
     full: bool,
@@ -62,11 +58,11 @@ pub(crate) fn observe(scene: &Scene, damage: &DamageSet) {
             return;
         }
         let regions: Vec<_> = plan.passes.iter().map(|pass| pass.region).collect();
-        let layering = Layering::of(&regions, CEILING);
+        let layering = Layering::of(&regions, Capacity::DEFAULT);
         frames.push(Frame {
             passes: regions.len(),
             depth: layering.layers(),
-            over: layering.placed() < regions.len(),
+            over: layering.rounds() > 1,
             full: damage.is_full(),
         });
     });
@@ -123,7 +119,7 @@ fn report(label: &str, all: &[Frame], full: bool) {
         .unwrap_or_default();
     println!(
         "{label} frames={} passes[p50={} max={}] depth[p50={} max={}] \
-         worst_frame[passes={} depth={}] over_four_layers={} over_the_ceiling={}",
+         worst_frame[passes={} depth={}] over_four_layers={} over_one_round={}",
         frames.len(),
         passes[passes.len() / 2],
         passes[passes.len() - 1],

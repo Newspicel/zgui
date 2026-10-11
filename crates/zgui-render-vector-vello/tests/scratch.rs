@@ -4,7 +4,7 @@ mod support;
 
 use zgui_bits::DamageSet;
 use zgui_color::Color;
-use zgui_render::VectorRaster;
+use zgui_render::{Capacity, Extent, VectorRaster};
 use zgui_render_vector_coverage::CoverageRaster;
 use zgui_render_vector_vello::VelloRaster;
 use zgui_render_vector_vello::raster::scratch::Scratch;
@@ -15,7 +15,13 @@ use support::{Which, harness_at, opaque, path, quad, rect, scene_at, vector};
 /// The extent every scene here fits in.
 const SIDE: i32 = 640;
 
-/// A scene whose passes reach the far corner of the surface and stack `deep` high at the near one.
+/// A scratch whose layers hold one of the passes below each, so a stack of them is deep.
+const ONE_BIN: Capacity = Capacity {
+    side: 32,
+    layers: Scratch::MAX_LAYERS,
+};
+
+/// A scene of `deep` passes stacked at the near corner of the surface and one at the far corner.
 fn wide(deep: u32) -> Scene {
     let mut scene = scene_at(SIDE);
     quad(
@@ -77,18 +83,16 @@ fn the_scratch_shrinks_when_the_content_does() {
         return;
     };
     let gpu = std::sync::Arc::clone(harness.gpu());
-    let mut raster = VelloRaster::new(&gpu, SIDE as u32, SIDE as u32).expect("a rasteriser");
+    let mut raster = VelloRaster::new(&gpu, SIDE as u32, SIDE as u32)
+        .expect("a rasteriser")
+        .with_capacity(ONE_BIN);
 
     let large = wide(6);
     raster.plan(large.pass_plan());
-    let grown = raster.extent();
-    assert!(
-        grown > (16, 16),
-        "the fixture has to reach further than the narrow one, or nothing here shrinks: {grown:?}"
-    );
+    let grown = raster.memory().scratch;
     assert!(
         raster.layers() > Scratch::LAYERS,
-        "the fixture has to stack passes deeper than the floor, or nothing here shrinks"
+        "the fixture has to need more layers than the floor, or nothing here shrinks"
     );
 
     let small = narrow();
@@ -97,13 +101,17 @@ fn the_scratch_shrinks_when_the_content_does() {
     raster.plan(small.pass_plan());
     assert_eq!(
         raster.extent(),
-        (16, 16),
+        (Extent::SIZE_CLASS, Extent::SIZE_CLASS),
         "a settled window has to get its video memory back"
     );
     assert_eq!(
         raster.layers(),
         Scratch::LAYERS,
         "the depth has to come back down with the extent"
+    );
+    assert!(
+        raster.memory().scratch < grown,
+        "the scratch has to cost less than it did"
     );
 }
 
@@ -118,7 +126,9 @@ fn the_scratch_does_not_shrink_inside_a_fling() {
         return;
     };
     let gpu = std::sync::Arc::clone(harness.gpu());
-    let mut raster = VelloRaster::new(&gpu, SIDE as u32, SIDE as u32).expect("a rasteriser");
+    let mut raster = VelloRaster::new(&gpu, SIDE as u32, SIDE as u32)
+        .expect("a rasteriser")
+        .with_capacity(ONE_BIN);
 
     let large = wide(6);
     let small = narrow();
@@ -135,7 +145,7 @@ fn the_scratch_does_not_shrink_inside_a_fling() {
     }
 }
 
-/// The fallback rasteriser costs twice what the other one does for the same frame, and shares layers
+/// The fallback rasteriser costs twice what the other one does for the same frame, and packs layers
 /// on the same terms.
 ///
 /// It holds an accumulation texture and a straight one, so every texel of its scratch is two. That
@@ -158,16 +168,16 @@ fn the_coverage_scratch_is_two_textures_of_the_shared_shape() {
     );
     assert_eq!(
         raster.depth(),
-        2,
-        "one stacked pair costs two layers and the distant pass rejoins the first, exactly as it \
-         does for the other rasteriser"
+        1,
+        "a stacked pair and a distant pass fit in one layer, exactly as they do for the other \
+         rasteriser"
     );
 }
 
 /// The scene for the cut-pass case: a tall drawing, something over it, and a disc beside it.
 ///
 /// The thing over the tall drawing splits the two drawings into two passes, and the two share one
-/// layer because they do not meet on the surface.
+/// layer in bins side by side.
 fn cut_scene(damage: &DamageSet) -> Scene {
     let mut scene = support::scene();
     quad(&mut scene, rect(0.0, 0.0, 128.0, 128.0), opaque(0, 0, 0));

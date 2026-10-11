@@ -76,6 +76,7 @@ impl VectorRaster for RecordingRaster {
                 region: pass.region,
                 raster_region: pass.region,
                 target: VectorTarget(index as u64),
+                round: 0,
                 items: pass.items.clone(),
                 clip: pass.clip,
                 instanced: pass.instanced,
@@ -85,13 +86,16 @@ impl VectorRaster for RecordingRaster {
         plan
     }
 
-    fn clear_targets(&mut self, plan: &VectorPlan) {
-        self.cleared
-            .extend(plan.passes.iter().map(|pass| pass.target));
+    fn clear_targets(&mut self, plan: &VectorPlan, round: usize) {
+        self.cleared.extend(
+            plan.passes[plan.round(round)]
+                .iter()
+                .map(|pass| pass.target),
+        );
     }
 
     fn prepare(&mut self, frame: &mut VectorFrame<'_>) -> Result<(), VectorError> {
-        for pass in &frame.plan.passes {
+        for pass in &frame.plan.passes[frame.passes()] {
             assert!(
                 self.cleared.contains(&pass.target),
                 "a scratch must be cleared before anything reads it"
@@ -148,7 +152,7 @@ impl Renderer for RecordingRenderer {
 
         let plan = self.raster.plan(scene.pass_plan());
         if !plan.is_empty() {
-            self.raster.clear_targets(&plan);
+            self.raster.clear_targets(&plan, 0);
             let placements = zgui_scene::Placements::of(&scene.spatial);
             let mut frame = VectorFrame::new(
                 &plan,
@@ -265,4 +269,28 @@ fn an_external_texture_can_be_registered_and_forgotten() {
     assert_eq!(renderer.externals.len(), 1);
     renderer.release_external(TextureHandle(42));
     assert!(renderer.externals.is_empty());
+}
+
+#[test]
+fn a_plan_names_the_passes_of_each_round_in_order() {
+    let pass = |round| VectorPass {
+        region: Rect::new(Point::new(0, 0), Size::new(16, 16)),
+        raster_region: Rect::new(Point::new(0, 0), Size::new(16, 16)),
+        target: VectorTarget(0),
+        round,
+        items: 0..0,
+        clip: zgui_scene::ClipId::ROOT,
+        instanced: false,
+        clamped: false,
+    };
+    let plan = VectorPlan {
+        passes: [0, 0, 1, 2, 2].into_iter().map(pass).collect(),
+        items: Vec::new(),
+    };
+    assert_eq!(plan.rounds(), 3);
+    assert_eq!(plan.round(0), 0..2);
+    assert_eq!(plan.round(1), 2..3);
+    assert_eq!(plan.round(2), 3..5);
+    assert!(plan.round(3).is_empty());
+    assert_eq!(VectorPlan::empty().rounds(), 0);
 }

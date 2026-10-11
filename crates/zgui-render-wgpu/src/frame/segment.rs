@@ -148,6 +148,11 @@ pub enum Segment {
     Encoder(EncoderOp),
     /// A run of draws into one target.
     Pass(PlannedPass),
+    /// Rasterise this round of the vector plan before anything after it is recorded.
+    ///
+    /// The rasteriser submits work of its own into the layers the round before it used, so
+    /// everything recorded before this is submitted first.
+    Round(usize),
 }
 
 impl Segment {
@@ -155,7 +160,7 @@ impl Segment {
     pub fn pass(&self) -> Option<&PlannedPass> {
         match self {
             Self::Pass(pass) => Some(pass),
-            Self::Encoder(_) => None,
+            Self::Encoder(_) | Self::Round(_) => None,
         }
     }
 
@@ -163,7 +168,15 @@ impl Segment {
     pub fn encoder_op(&self) -> Option<EncoderOp> {
         match self {
             Self::Encoder(op) => Some(*op),
-            Self::Pass(_) => None,
+            Self::Pass(_) | Self::Round(_) => None,
+        }
+    }
+
+    /// The vector round this rasterises, if it is one.
+    pub fn round(&self) -> Option<usize> {
+        match self {
+            Self::Round(round) => Some(*round),
+            Self::Encoder(_) | Self::Pass(_) => None,
         }
     }
 }

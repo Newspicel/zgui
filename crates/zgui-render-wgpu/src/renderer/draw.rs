@@ -10,7 +10,7 @@ use zgui_scene::Scene;
 
 use crate::frame::build::PlanBuilder;
 use crate::frame::damage;
-use crate::frame::pass::Recorder;
+use crate::frame::pass::{Recorded, Recorder};
 use crate::frame::plan::plan_segments;
 use crate::frame::present;
 use crate::pipeline::kind::PipelineKind;
@@ -158,9 +158,10 @@ impl Renderer for WgpuRenderer {
         // and a slot allocator hands out offsets in the order it is asked.
         self.buffers.stage_effect_params(scene);
 
-        // Everything the rasteriser does happens before this frame's encoder exists, because an
+        // The rasteriser's first round happens before this frame's encoder exists, because an
         // implementation submits command buffers of its own. Ordering stays exact anyway: nothing
-        // it submits writes the target this frame composes into.
+        // it submits writes the target this frame composes into. A later round is rasterised
+        // between two submissions of the frame, after the composites of the round before it.
         zgui_profile::latency::mark("r.vectors");
         // A pass outside every group rasterises only what the scene's damage reaches. A frame
         // widened above draws its passes whole.
@@ -220,12 +221,7 @@ impl Renderer for WgpuRenderer {
             )
         };
         zgui_profile::latency::mark("r.encoder");
-        let mut encoder =
-            self.gpu
-                .device()
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("zgui.frame"),
-                });
+        let mut encoder = self.frame_encoder();
         // Before anything this frame draws, and after nothing: the passes below clear and redraw
         // each damage rectangle, and the pixels this moves are the ones outside them.
         if let Some(shift) = self.pending_shift.take() {
@@ -250,25 +246,15 @@ impl Renderer for WgpuRenderer {
                 format!("{upload_allocations} upload chunks allocated"),
             );
         }
-        // One borrow for the whole recording, released before anything else on this device asks for
-        // the pipelines it shares with the other windows.
-        let recorded = {
-            let pipelines = &mut *self.pipelines.borrow_mut();
-            Recorder {
-                gpu: &self.gpu,
-                pipelines,
-                buffers: &self.buffers,
-                atlas: &self.atlas,
-                pool: &self.groups,
-                composed: &self.composed,
-                sampler: &self.sampler,
-                externals: &self.externals,
-                vectors: self.vectors.as_deref(),
-                marks: &self.marks_scratch,
-                mark_extent: marks.extent,
+        let mut recorded = Recorded::default();
+        for (round, segments) in plan.runs() {
+            if let (Some(round), Some(vectors)) = (round, vectors.as_ref()) {
+                let finished = core::mem::replace(&mut encoder, self.frame_encoder());
+                self.gpu.queue().submit([finished.finish()]);
+                self.rasterise_round(scene, vectors, round);
             }
-            .record(&mut encoder, &plan)
-        };
+            recorded += self.record(&mut encoder, &plan, segments, marks.extent);
+        }
         self.groups.release_all();
         if plan.deferred > 0 {
             tracing::debug!(
@@ -466,7 +452,8 @@ impl Renderer for WgpuRenderer {
 }
 
 impl WgpuRenderer {
-    /// Runs this frame's vector work, before the frame's own encoder exists.
+    /// Resources this frame's vector work and rasterises its first round, before the frame's own
+    /// encoder exists.
     ///
     /// A frame with no surviving vector item runs no rasterisation at all — not an empty pass, which
     /// is very far from free — so the whole of this is behind one question asked of `planned`: the
@@ -506,18 +493,6 @@ impl WgpuRenderer {
         if plan.is_empty() {
             return None;
         }
-        // Mandatory, and before anything reads: a rasterisation that fails while reporting success
-        // would otherwise leave the previous frame's content in a reused scratch, which composites
-        // as wrong pixels rather than as missing ones and has nothing to notice it by.
-        raster.clear_targets(&plan);
-        let placements = zgui_scene::Placements::of(&scene.spatial);
-        let mut frame = zgui_render::VectorFrame::new(
-            &plan,
-            &scene.primitives.vectors,
-            &scene.clips,
-            &scene.paints,
-            &placements,
-        );
         debug_assert_eq!(
             plan.passes.len(),
             planned.passes.len(),
@@ -525,16 +500,13 @@ impl WgpuRenderer {
              named by its index, so a plan that dropped one would draw every later composite from \
              the wrong pass"
         );
-        // The frame borrows the plan, and the plan is what the shortfall arm below shortens, so
-        // the result is taken out of the borrow before it is read.
-        let outcome = raster.prepare(&mut frame);
-        match outcome {
+        match self.prepare_round(scene, &plan, 0) {
             Ok(()) => Some(plan),
-            // More passes than the scratch can keep apart. The passes that were finished are each
-            // in a scratch of their own and composite correctly; only the rest have nowhere to be
-            // read from, and a plan naming fewer passes than were planned leaves exactly those
-            // composites counted as undrawn. Losing the tail is a fraction of the frame's vector
-            // content, where returning nothing here loses all of it.
+            // A rasteriser that could not place every pass. Rounds give the built-in ones room for
+            // any frame, so this is another implementation's limit. The passes that were finished
+            // composite correctly; a plan naming fewer passes than were planned leaves exactly the
+            // rest counted as undrawn. Losing the tail is a fraction of the frame's vector content,
+            // where returning nothing here loses all of it.
             Err(zgui_render::VectorError::OutOfCapacity { detail, prepared }) => {
                 counter::bump(Counter::VectorFramesDropped);
                 assert!(
@@ -563,6 +535,91 @@ impl WgpuRenderer {
                 None
             }
         }
+    }
+
+    /// Clears and rasterises one round of `plan`.
+    fn prepare_round(
+        &mut self,
+        scene: &Scene,
+        plan: &zgui_render::VectorPlan,
+        round: usize,
+    ) -> Result<(), zgui_render::VectorError> {
+        let Some(raster) = self.vectors.as_deref_mut() else {
+            return Ok(());
+        };
+        // Mandatory, and before anything reads: a rasterisation that fails while reporting success
+        // would otherwise leave the previous round's content in a reused scratch, which composites
+        // as wrong pixels rather than as missing ones and has nothing to notice it by.
+        raster.clear_targets(plan, round);
+        let placements = zgui_scene::Placements::of(&scene.spatial);
+        let mut frame = zgui_render::VectorFrame::new(
+            plan,
+            &scene.primitives.vectors,
+            &scene.clips,
+            &scene.paints,
+            &placements,
+        )
+        .in_round(round);
+        raster.prepare(&mut frame)
+    }
+
+    /// Rasterises a round after the first, between two submissions of the frame.
+    ///
+    /// The composites of the round are already planned, so a round that fails cannot be taken out
+    /// of the plan. Its layers were cleared, so its composites draw nothing, and the frame is
+    /// counted.
+    fn rasterise_round(&mut self, scene: &Scene, plan: &zgui_render::VectorPlan, round: usize) {
+        let Err(failure) = self.prepare_round(scene, plan, round) else {
+            return;
+        };
+        counter::bump(Counter::VectorFramesDropped);
+        assert!(
+            !(self.vector_shortfall_is_fatal
+                && matches!(failure, zgui_render::VectorError::OutOfCapacity { .. })),
+            "the vector rasteriser ran out of capacity in round {round}: {failure}"
+        );
+        tracing::warn!(
+            %failure,
+            round,
+            "the vector rasteriser could not prepare a round, so its passes draw nothing"
+        );
+    }
+
+    /// Records `segments` of `plan` into `encoder`.
+    ///
+    /// One borrow of the pipelines per run, released before anything else on this device asks for
+    /// the pipelines it shares with the other windows.
+    fn record(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        plan: &crate::frame::build::FramePlan,
+        segments: &[crate::frame::segment::Segment],
+        mark_extent: zgui_geom::Size<i32, zgui_geom::Device>,
+    ) -> Recorded {
+        let pipelines = &mut *self.pipelines.borrow_mut();
+        Recorder {
+            gpu: &self.gpu,
+            pipelines,
+            buffers: &self.buffers,
+            atlas: &self.atlas,
+            pool: &self.groups,
+            composed: &self.composed,
+            sampler: &self.sampler,
+            externals: &self.externals,
+            vectors: self.vectors.as_deref(),
+            marks: &self.marks_scratch,
+            mark_extent,
+        }
+        .record(encoder, plan, segments)
+    }
+
+    /// A command encoder for this frame's own work.
+    fn frame_encoder(&self) -> wgpu::CommandEncoder {
+        self.gpu
+            .device()
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("zgui.frame"),
+            })
     }
 
     /// Copies the composed target onto whatever is being presented to.

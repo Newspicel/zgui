@@ -12,7 +12,7 @@ pub mod target;
 pub use crate::vector::decay::{Decay, Extent};
 pub use crate::vector::error::VectorError;
 pub use crate::vector::frame::VectorFrame;
-pub use crate::vector::pack::Layering;
+pub use crate::vector::pack::{Capacity, Layering, Placement};
 pub use crate::vector::pass::VectorPass;
 pub use crate::vector::plan::VectorPlan;
 pub use crate::vector::raster::{VectorBackend, VectorRaster, VectorStatus};

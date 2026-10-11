@@ -20,12 +20,10 @@
 //! panel — which is a second thing that can go wrong between the claim and the picture — a section
 //! is drawn at once onto a surface tall enough to hold it.
 //!
-//! Two things make that a claim rather than an arrangement, and both are checked instead of
-//! assumed. A page can grow past the surface, and a region below the last row reads back as the
-//! colour of nothing; [`on_surface`] refuses one. And a frame can plan more vector passes than the
-//! rasteriser has scratch layers to keep apart, at which point it loses its vector content whole;
-//! [`Part`] is why one section is mounted at a time rather than the whole gallery. Both failures
-//! look, pixel for pixel, exactly like the failures this file exists to catch, so neither is left
+//! That is a claim rather than an arrangement, because it is checked instead of assumed. A page can
+//! grow past the surface, and a region below the last row reads back as the colour of nothing;
+//! [`on_surface`] refuses one, and [`Part`] mounts one section at a time so each fits. That failure
+//! looks, pixel for pixel, exactly like the failures this file exists to catch, so it is not left
 //! to be discovered as one.
 
 mod desktop;

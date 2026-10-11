@@ -93,6 +93,7 @@ mod tests {
             region: Rect::new(Point::new(64, 128), Size::new(64, 32)),
             raster_region: Rect::new(Point::new(8, 16), Size::new(64, 32)),
             target: VectorTarget(0),
+            round: 0,
             items: 0..2,
             clip: ClipId(1),
             instanced,

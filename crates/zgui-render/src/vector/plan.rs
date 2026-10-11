@@ -1,5 +1,7 @@
 //! What an implementation resourced a frame's vector work into.
 
+use core::ops::Range;
+
 use zgui_scene::{PlannedItem, ScenePassPlan};
 
 use crate::vector::pass::VectorPass;
@@ -36,6 +38,18 @@ impl VectorPlan {
     /// How many passes the frame costs.
     pub fn len(&self) -> usize {
         self.passes.len()
+    }
+
+    /// How many rounds the passes are rasterised in.
+    pub fn rounds(&self) -> usize {
+        self.passes.last().map_or(0, |pass| pass.round + 1)
+    }
+
+    /// The indices of the passes `round` rasterises.
+    pub fn round(&self, round: usize) -> Range<usize> {
+        let start = self.passes.partition_point(|pass| pass.round < round);
+        let end = self.passes.partition_point(|pass| pass.round <= round);
+        start..end.max(start)
     }
 
     /// The items of one pass.

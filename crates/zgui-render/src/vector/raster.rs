@@ -63,8 +63,8 @@ pub struct VectorStatus {
 ///   implementation whose rasterisation can fail while reporting success would otherwise leave a
 ///   reused scratch holding the *previous* frame's content, which composites as wrong pixels rather
 ///   than missing ones and has nothing to notice it by.
-/// * [`prepare`](VectorRaster::prepare) does the work, before the frame's own recording begins,
-///   because an implementation may submit work of its own.
+/// * [`prepare`](VectorRaster::prepare) does the work of one round, before the commands that
+///   composite that round are recorded, because an implementation may submit work of its own.
 /// * [`memory`](VectorRaster::memory) is what a budget is written against.
 ///
 /// [`backend`](VectorRaster::backend) is diagnostic metadata rather than frame work: the inspector
@@ -90,12 +90,14 @@ pub trait VectorRaster: 'static {
     /// the wrong pass. [`VectorPlan::resourcing`] starts a plan that keeps the alignment.
     fn plan(&mut self, passes: &ScenePassPlan) -> VectorPlan;
 
-    /// Clears every scratch the plan will write, before anything reads it.
-    fn clear_targets(&mut self, plan: &VectorPlan);
+    /// Clears every scratch `round` of the plan will write, before anything reads it.
+    fn clear_targets(&mut self, plan: &VectorPlan, round: usize);
 
-    /// Rasterises every pass of the frame.
+    /// Rasterises every pass of the frame's round.
     ///
-    /// Called before the frame's own command recording begins.
+    /// Called before the commands that composite the round are recorded. A plan of several rounds
+    /// is prepared once per round, in order, and each round may reuse the targets of the round
+    /// before it.
     ///
     /// # Errors
     ///

@@ -7,13 +7,11 @@ use zgui_render_wgpu::Gpu;
 /// The format the path renderer's final stage is wired to write.
 pub const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 
-/// A two-dimensional array texture, in the surface's own coordinates, with room for the passes of
-/// one frame that cannot share a layer.
+/// A two-dimensional array texture with room for one round of a frame's passes.
 ///
-/// A layer holds device pixels where they belong rather than in a corner of its own, so two passes
-/// that do not meet on the screen do not meet in the layer either and one layer holds both. What
-/// decides the depth is therefore how much of a frame's vector work overlaps, not how much of it
-/// there is — a frame of five hundred passes that nowhere overlap costs one layer.
+/// Each pass is rasterised into a bin of its own size in some layer, so what decides the depth is
+/// the area of a frame's vector work, not how much of it overlaps on the surface. A frame of five
+/// hundred passes stacked over one point costs one layer when their bins fit in it.
 ///
 /// `STORAGE_BINDING` is what the path renderer needs; `RENDER_ATTACHMENT` is what the pre-clear
 /// needs, and the pre-clear is not optional. A rasterisation that overflows a fixed buffer can
@@ -34,17 +32,12 @@ pub struct Scratch {
 
 impl Scratch {
     /// How many layers a scratch starts with, and the fewest it ever shrinks to.
-    pub const LAYERS: u32 = 4;
+    pub const LAYERS: u32 = 1;
 
-    /// The most layers a frame may have.
+    /// The most layers one round may have.
     ///
-    /// **This is a ceiling rather than a wrap, and it is reached by overlap rather than by count.**
-    /// Every pass of a frame is rasterised before any of them is composited — the rasteriser submits
-    /// work of its own, which has to happen before the frame's encoder is opened — so a layer holds
-    /// its pass's coverage until that pass's composite has read it. Passes that do not overlap on
-    /// the surface share a layer freely; only a frame with this many passes stacked over one point
-    /// runs out, and it reports that it could not do the work rather than putting one on top of
-    /// another, which would cost the wrong content in the right place.
+    /// A frame whose passes need more is rasterised in rounds, and each round reuses the layers
+    /// after the composites of the round before it have read them.
     pub const MAX_LAYERS: u32 = 64;
 
     /// An unallocated scratch.

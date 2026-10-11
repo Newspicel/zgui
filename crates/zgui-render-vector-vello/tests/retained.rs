@@ -19,7 +19,7 @@ fn rasterise(raster: &mut impl VectorRaster, scene: &Scene) {
     if plan.is_empty() {
         return;
     }
-    raster.clear_targets(&plan);
+    raster.clear_targets(&plan, 0);
     let placements = zgui_scene::Placements::of(&scene.spatial);
     let mut frame = VectorFrame::new(
         &plan,

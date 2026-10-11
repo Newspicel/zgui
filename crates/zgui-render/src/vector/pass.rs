@@ -21,6 +21,12 @@ pub struct VectorPass {
     pub raster_region: Rect<i32, Device>,
     /// Where the implementation put the result.
     pub target: VectorTarget,
+    /// The round that rasterises this pass.
+    ///
+    /// Rounds are runs of the plan in order: a pass is never in an earlier round than the pass
+    /// before it. A renderer rasterises a round, composites its passes, and then rasterises the
+    /// next one into the same targets.
+    pub round: usize,
     /// The pass's items, indexing the plan's item list.
     pub items: Range<usize>,
     /// The clip a whole-pass composite binds.

@@ -8,7 +8,7 @@ use zgui_scene::{Batch, ExternalTextureId};
 
 use crate::atlas_backend::sink::AtlasTextures;
 use crate::frame::build::FramePlan;
-use crate::frame::segment::{EncoderOp, PassLoad, PlannedDraw, PlannedPass};
+use crate::frame::segment::{EncoderOp, PassLoad, PlannedDraw, PlannedPass, Segment};
 use crate::frame::target::TargetRef;
 use crate::gpu::device::Gpu;
 use crate::pipeline::Pipelines;
@@ -24,6 +24,13 @@ pub struct Recorded {
     pub draw_calls: u32,
     /// How many planned draws could not be issued, for want of a pipeline or a texture.
     pub dropped: u32,
+}
+
+impl core::ops::AddAssign for Recorded {
+    fn add_assign(&mut self, other: Self) {
+        self.draw_calls += other.draw_calls;
+        self.dropped += other.dropped;
+    }
 }
 
 /// A texture the renderer was handed rather than one it drew.
@@ -61,19 +68,28 @@ pub struct Recorder<'frame> {
 }
 
 impl Recorder<'_> {
-    /// Records `plan` into `encoder`.
+    /// Records `segments` of `plan` into `encoder`.
     ///
     /// One pass is opened per pass segment and dropped before the next segment, because a live
     /// pass holds the encoder borrowed and the operations between passes need it. That constraint
     /// is not worked around here — it is what the plan is a plan *of*.
-    pub fn record(&mut self, encoder: &mut wgpu::CommandEncoder, plan: &FramePlan) -> Recorded {
+    ///
+    /// A vector round records nothing: the caller cuts the plan at each one with
+    /// [`FramePlan::runs`], because a round is rasterised between two submissions.
+    pub fn record(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        plan: &FramePlan,
+        segments: &[Segment],
+    ) -> Recorded {
         let mut recorded = Recorded::default();
-        for segment in &plan.segments {
+        for segment in segments {
             match segment {
-                crate::frame::segment::Segment::Encoder(op) => self.run(encoder, *op),
-                crate::frame::segment::Segment::Pass(pass) => {
+                Segment::Encoder(op) => self.run(encoder, *op),
+                Segment::Pass(pass) => {
                     self.record_pass(encoder, plan, pass, &mut recorded);
                 }
+                Segment::Round(_) => {}
             }
         }
         counter::add(Counter::DrawCalls, u64::from(recorded.draw_calls));

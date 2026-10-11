@@ -249,7 +249,7 @@ fn an_item_whose_residual_clip_has_no_shape_is_left_out_and_counted() {
     let mut compute =
         zgui_render_vector_vello::VelloRaster::new(&gpu, 128, 128).expect("a rasteriser");
     let plan = zgui_render::VectorRaster::plan(&mut compute, scene.pass_plan());
-    zgui_render::VectorRaster::clear_targets(&mut compute, &plan);
+    zgui_render::VectorRaster::clear_targets(&mut compute, &plan, 0);
     let placements = zgui_scene::Placements::of(&scene.spatial);
     let mut frame = zgui_render::VectorFrame::new(
         &plan,
@@ -267,7 +267,7 @@ fn an_item_whose_residual_clip_has_no_shape_is_left_out_and_counted() {
 
     let mut fallback = zgui_render_vector_coverage::CoverageRaster::new(&gpu, 128, 128);
     let plan = zgui_render::VectorRaster::plan(&mut fallback, scene.pass_plan());
-    zgui_render::VectorRaster::clear_targets(&mut fallback, &plan);
+    zgui_render::VectorRaster::clear_targets(&mut fallback, &plan, 0);
     let placements = zgui_scene::Placements::of(&scene.spatial);
     let mut frame = zgui_render::VectorFrame::new(
         &plan,

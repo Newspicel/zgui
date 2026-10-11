@@ -39,6 +39,14 @@ impl FramePlan {
     pub fn draws_of(&self, pass: &PlannedPass) -> &[PlannedDraw] {
         &self.draws[pass.draws.clone()]
     }
+
+    /// The segments cut at each vector round: the round to rasterise first, if any, and the run of
+    /// segments up to the next one.
+    pub fn runs(&self) -> impl Iterator<Item = (Option<usize>, &[Segment])> {
+        let rounds =
+            core::iter::once(None).chain(self.segments.iter().filter_map(Segment::round).map(Some));
+        rounds.zip(self.segments.split(|segment| segment.round().is_some()))
+    }
 }
 
 /// Builds a [`FramePlan`], lending targets and staging blocks as it goes.
@@ -88,6 +96,8 @@ pub struct PlanBuilder<'gpu> {
     lent: Vec<GroupSlot>,
     /// Targets lent but not yet written into, which the first pass on each has to discard.
     unwritten: Vec<GroupSlot>,
+    /// The vector round whose passes are in the scratch at this point of the plan.
+    round: usize,
 }
 
 impl<'gpu> PlanBuilder<'gpu> {
@@ -130,6 +140,7 @@ impl<'gpu> PlanBuilder<'gpu> {
             open: None,
             lent: Vec::new(),
             unwritten: Vec::new(),
+            round: 0,
         }
     }
 
@@ -258,6 +269,24 @@ impl<'gpu> PlanBuilder<'gpu> {
         let offset = self.mark_draws.stage(&draw());
         self.mark_blocks.insert(position, offset);
         offset
+    }
+
+    /// Makes `round` the vector round in the scratch before the next draw reads it.
+    ///
+    /// Round zero is rasterised before the frame is recorded. Any other round, and round zero again
+    /// after a later one, cuts the plan: the open pass ends, the round is rasterised, and the same
+    /// pass opens again and keeps what it drew.
+    pub fn round(&mut self, round: usize) {
+        if self.round == round {
+            return;
+        }
+        self.round = round;
+        let open = self.open.as_ref().map(|pass| (pass.target, pass.scissor));
+        self.end_pass();
+        self.plan.segments.push(Segment::Round(round));
+        if let Some((target, scissor)) = open {
+            self.begin_pass(target, scissor);
+        }
     }
 
     /// Stages the quads of one vector composite and returns the instance range naming them.
