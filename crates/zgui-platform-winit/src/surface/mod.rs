@@ -8,6 +8,7 @@ mod handles;
 pub(crate) use crate::surface::attributes::window as window_attributes;
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use accesskit::TreeUpdate;
 use winit::dpi::{LogicalPosition, LogicalSize};
@@ -46,6 +47,8 @@ pub struct WinitSurface {
     title_buttons: Option<TitleButtons>,
     /// How a frame request reaches the loop when the platform does not deliver it.
     waker: Arc<ProxyWaker>,
+    /// Whether the window was shown at least once.
+    shown: AtomicBool,
 }
 
 impl WinitSurface {
@@ -61,6 +64,7 @@ impl WinitSurface {
             window,
             title_buttons,
             waker,
+            shown: AtomicBool::new(false),
         }
     }
 
@@ -143,8 +147,9 @@ impl Surface for WinitSurface {
 
     fn request_redraw(&self) {
         // Windows paints only visible windows, and a surface stays hidden until its first frame
-        // presents. The loop delivers the request for a hidden window itself.
-        if cfg!(windows) && self.window.is_visible() == Some(false) {
+        // presents. Until the window is shown, the loop delivers the request itself. A window that
+        // is hidden later waits for the paint that shows it again.
+        if cfg!(windows) && !self.shown.load(Ordering::Relaxed) {
             self.waker.redraw(self.window.id());
         } else {
             self.window.request_redraw();
@@ -160,6 +165,9 @@ impl Surface for WinitSurface {
     }
 
     fn set_visible(&self, visible: bool) {
+        if visible {
+            self.shown.store(true, Ordering::Relaxed);
+        }
         self.window.set_visible(visible);
     }
 

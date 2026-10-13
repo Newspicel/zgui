@@ -56,7 +56,7 @@ impl ProxyWaker {
     }
 
     /// Asks the loop for a frame of `window` on the loop's own thread.
-    pub fn redraw(&self, window: WindowId) {
+    pub(crate) fn redraw(&self, window: WindowId) {
         let proxy = self.proxy.lock().expect("the channel is not poisoned");
         if proxy.send_event(UserEvent::Redraw(window)).is_err() {
             tracing::debug!(target: "zgui::platform", "a redraw arrived after the loop had finished");
